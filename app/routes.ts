@@ -1,3 +1,41 @@
-import { type RouteConfig, index } from "@react-router/dev/routes";
+// React Router v7 route configuration
+// Routes are defined using file-based routing convention
+// File naming: orders.new.tsx maps to /orders/new
 
-export default [index("routes/home.tsx")] satisfies RouteConfig;
+import type { RouteConfig } from "@react-router/dev/routes";
+
+export default [
+  {
+    index: true,
+    file: "routes/_index.tsx",
+  },
+  {
+    path: "login",
+    file: "routes/login.tsx",
+  },
+  {
+    path: "logout",
+    file: "routes/logout.tsx",
+  },
+  {
+    path: "orders/new",
+    file: "routes/orders.new.tsx",
+  },
+  {
+    path: "members",
+    file: "routes/members.tsx",
+  },
+  {
+    path: "weeks",
+    file: "routes/weeks.tsx",
+  },
+  {
+    path: "api/users",
+    file: "routes/api.users.tsx",
+  },
+  {
+    path: "*",
+    file: "routes/$.tsx",
+  },
+] satisfies RouteConfig;
+

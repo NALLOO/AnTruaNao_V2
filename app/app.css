@@ -13,3 +13,27 @@ body {
     color-scheme: dark;
   }
 }
+
+/* Style cho icon calendar của input date */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) saturate(100%) invert(0%);
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  filter: brightness(0) saturate(100%) invert(30%);
+}
+
+/* Firefox */
+input[type="date"]::-moz-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 1;
+  filter: brightness(0) saturate(100%) invert(0%);
+  width: 20px;
+  height: 20px;
+  padding: 2px;
+}

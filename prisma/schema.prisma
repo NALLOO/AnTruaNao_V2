@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(cuid())
+  name      String
+  email     String?   @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  orderItems OrderItem[]
+  payments   Payment[]
+  
+  @@map("users")
+}
+
+model Week {
+  id          String    @id @default(cuid())
+  startDate   DateTime  // Ngày bắt đầu tuần (Thứ hai)
+  endDate     DateTime  // Ngày kết thúc tuần (Thứ sáu)
+  name        String?   // Tên tuần (tùy chọn, ví dụ: "Tuần 1 - Tháng 1")
+  isFinalized Boolean   @default(false) // Đã quyết toán tuần chưa
+  finalizedAt DateTime? // Thời gian quyết toán tuần
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  orders      Order[]
+  payments    Payment[]
+  
+  @@map("weeks")
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  weekId        String      // Tuần mà đơn hàng thuộc về
+  orderDate     DateTime    @default(now())
+  totalAmount   Float       // Tổng tiền trước giảm giá
+  discount      Float       @default(0) // Số tiền giảm giá
+  finalAmount   Float       // Tổng tiền sau giảm giá
+  description   String?     // Mô tả đơn hàng
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  week          Week        @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  items         OrderItem[]
+  
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String   @id @default(cuid())
+  orderId      String
+  userId       String
+  itemName     String   // Tên món ăn
+  price        Float    // Giá của món
+  discountShare Float   @default(0) // Phần giảm giá được chia cho món này
+  finalPrice   Float    // Giá cuối cùng sau khi trừ phần giảm giá
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("order_items")
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  userId    String
+  weekId    String
+  paid      Boolean  @default(false) // Đã thanh toán chưa
+  paidAt    DateTime? // Thời gian thanh toán
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  week      Week     @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, weekId])
+  @@map("payments")
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  userName  String   @unique
+  password  String   // Lưu password dạng plain text (đơn giản cho demo)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("admins")
+}
+

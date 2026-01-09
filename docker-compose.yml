@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: antruanao_postgres
+    environment:
+      POSTGRES_USER: antruanao
+      POSTGRES_PASSWORD: antruanao123
+      POSTGRES_DB: antruanao_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U antruanao"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: antruanao_app
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://antruanao:antruanao123@postgres:5432/antruanao_db
+      NODE_ENV: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    # Entrypoint script handles Prisma setup
+
+volumes:
+  postgres_data:
+
