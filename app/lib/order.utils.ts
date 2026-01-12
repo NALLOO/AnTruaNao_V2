@@ -69,3 +69,33 @@ export function calculateUserTotals(
   }));
 }
 
+/**
+ * Format ngày theo định dạng Việt Nam (dd/MM/yyyy)
+ */
+export function formatDate(date: Date): string {
+  return new Date(date).toLocaleDateString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+/**
+ * Tạo URL QR code chuyển tiền
+ * Nội dung chuyển khoản: "tên người tien com ngày bắt đầu tuần"
+ * Ví dụ: "nghiapd tien com 12/01/2026"
+ */
+export function generateQRCodeUrl(
+  amount: number,
+  userName: string,
+  startDate: Date
+): string {
+  const amountValue = Math.round(amount);
+  const formattedDate = formatDate(startDate);
+  // Nội dung: "tên người tien com ngày bắt đầu tuần"
+  // Ví dụ: "nghiapd tien com 12/01/2026"
+  const addInfo = `${userName} tien com ${formattedDate}`;
+  const encodedAddInfo = encodeURIComponent(addInfo);
+  return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=PHAM%20DINH%20NGHIA`;
+}
+

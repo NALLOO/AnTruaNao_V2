@@ -1,5 +1,5 @@
 import type { Route } from "./+types/weeks";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation, useNavigate } from "react-router";
 import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
@@ -16,7 +16,13 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Yêu cầu đăng nhập
   await requireAdminId(request);
 
-  const weeks = await db.week.findMany({
+  const url = new URL(request.url);
+  const page = parseInt(url.searchParams.get("page") || "1", 10);
+  const showAll = url.searchParams.get("showAll") === "true";
+  const pageSize = 10; // Số tuần mỗi trang
+
+  // Lấy tất cả tuần để tính trạng thái thanh toán
+  const allWeeks = await db.week.findMany({
     include: {
       _count: {
         select: {
@@ -25,13 +31,13 @@ export async function loader({ request }: Route.LoaderArgs) {
       },
     },
     orderBy: {
-      startDate: "desc",
+      startDate: "desc", // Sắp xếp theo ngày bắt đầu tuần, mới nhất trước
     },
   });
 
   // Tính trạng thái thanh toán cho mỗi tuần
   const weeksWithPaymentStatus = await Promise.all(
-    weeks.map(async (week) => {
+    allWeeks.map(async (week) => {
       // Lấy đơn hàng trong tuần
       const weekOrders = await db.order.findMany({
         where: { weekId: week.id },
@@ -75,7 +81,31 @@ export async function loader({ request }: Route.LoaderArgs) {
     })
   );
 
-  return { weeks: weeksWithPaymentStatus };
+  // Filter: mặc định chỉ hiển thị tuần chưa thanh toán đủ hoặc chưa có dữ liệu
+  const filteredWeeks = showAll
+    ? weeksWithPaymentStatus
+    : weeksWithPaymentStatus.filter(
+      (week) => !week.allPaid || !week.hasUsers
+    );
+
+  // Tính pagination với filtered weeks
+  const totalWeeks = filteredWeeks.length;
+  const totalPages = Math.ceil(totalWeeks / pageSize);
+  const skip = (page - 1) * pageSize;
+  const paginatedWeeks = filteredWeeks.slice(skip, skip + pageSize);
+
+  return {
+    weeks: paginatedWeeks,
+    showAll,
+    pagination: {
+      currentPage: page,
+      totalPages,
+      totalItems: totalWeeks,
+      pageSize,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    },
+  };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -264,9 +294,10 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Weeks() {
-  const { weeks } = useLoaderData<typeof loader>();
+  const { weeks, pagination, showAll } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const isSubmitting = navigation.state === "submitting";
 
   const [showAddForm, setShowAddForm] = useState(false);
@@ -299,17 +330,34 @@ export default function Weeks() {
   // Tính ngày bắt đầu tuần hiện tại (Thứ hai)
   const getCurrentWeekStart = () => {
     const now = new Date();
-    const startOfWeek = new Date(now);
-    // Tính về Thứ hai gần nhất
+    // Tính về Thứ hai
     // getDay() trả về: 0=Chủ nhật, 1=Thứ hai, ..., 6=Thứ bảy
-    // Nếu là Chủ nhật (0), quay về Thứ hai tuần trước (-6)
-    // Nếu là Thứ hai (1), giữ nguyên (0)
-    // Nếu là Thứ ba trở đi (2-6), quay về Thứ hai (-(day-1))
+    // Nếu là Chủ nhật (0), thì Thứ hai tuần sau (+1)
+    // Nếu là Thứ hai (1), giữ nguyên (0) - Thứ hai hôm nay
+    // Nếu là Thứ ba trở đi (2-6), quay về Thứ hai tuần này (-(day-1))
     const dayOfWeek = now.getDay();
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    startOfWeek.setDate(now.getDate() - daysToMonday);
+    let daysToMonday: number;
+
+    if (dayOfWeek === 0) {
+      // Chủ nhật -> Thứ hai tuần sau
+      daysToMonday = 1;
+    } else if (dayOfWeek === 1) {
+      // Thứ hai -> giữ nguyên (Thứ hai hôm nay)
+      daysToMonday = 0;
+    } else {
+      // Thứ ba đến Thứ bảy -> quay về Thứ hai tuần này
+      daysToMonday = -(dayOfWeek - 1);
+    }
+
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() + daysToMonday);
     startOfWeek.setHours(0, 0, 0, 0);
-    return startOfWeek.toISOString().split("T")[0];
+
+    // Format date để tránh vấn đề timezone
+    const year = startOfWeek.getFullYear();
+    const month = String(startOfWeek.getMonth() + 1).padStart(2, "0");
+    const day = String(startOfWeek.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   };
 
   // Kiểm tra ngày có phải là Thứ hai không
@@ -340,28 +388,69 @@ export default function Weeks() {
     }
   };
 
+  const handleShowAllChange = (checked: boolean) => {
+    const url = new URL(window.location.href);
+    if (checked) {
+      url.searchParams.set("showAll", "true");
+    } else {
+      url.searchParams.delete("showAll");
+    }
+    // Reset về trang 1 khi thay đổi filter
+    url.searchParams.set("page", "1");
+    navigate(url.pathname + url.search);
+  };
+
+  const navigateToPage = (page: number) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", page.toString());
+    if (showAll) {
+      url.searchParams.set("showAll", "true");
+    }
+    navigate(url.pathname + url.search);
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8 flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-gray-900">Quản lý tuần</h1>
-        <button
-          type="button"
-          onClick={() => {
-            setShowAddForm(!showAddForm);
-            if (!showAddForm) {
-              // Set default là Thứ 2 tuần hiện tại
-              const defaultDate = getCurrentWeekStart();
-              setStartDate(defaultDate);
-              setDateError(null);
-            } else {
-              setStartDate(undefined);
-              setDateError(null);
-            }
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-        >
-          {showAddForm ? "Hủy" : "Thêm tuần mới"}
-        </button>
+      <div className="mb-8">
+        <div className="flex justify-between items-center mb-4">
+          <h1 className="text-3xl font-bold text-gray-900">Quản lý tuần</h1>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAddForm(!showAddForm);
+              if (!showAddForm) {
+                // Set default là Thứ 2 tuần hiện tại
+                const defaultDate = getCurrentWeekStart();
+                setStartDate(defaultDate);
+                setDateError(null);
+              } else {
+                setStartDate(undefined);
+                setDateError(null);
+              }
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            {showAddForm ? "Hủy" : "Thêm tuần mới"}
+          </button>
+        </div>
+        <div className="flex items-center">
+          <label className="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showAll}
+              onChange={(e) => handleShowAllChange(e.target.checked)}
+              className="w-4 h-4 focus:ring-blue-500 focus:ring-2 focus:ring-offset-2"
+            />
+            <span className="ml-2 text-sm text-gray-700">
+              Hiển thị tất cả các tuần
+            </span>
+          </label>
+          {!showAll && (
+            <span className="ml-3 text-xs text-gray-500">
+              (Mặc định: chỉ hiển thị tuần chưa thanh toán đủ hoặc chưa có dữ liệu)
+            </span>
+          )}
+        </div>
       </div>
 
       {actionData &&
@@ -546,7 +635,7 @@ export default function Weeks() {
                             <button
                               type="submit"
                               disabled={isSubmitting}
-                              className="text-green-600 hover:text-green-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="text-green-600 cursor-pointer hover:text-green-900 disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={(e) => {
                                 if (
                                   !confirm(
@@ -587,6 +676,156 @@ export default function Weeks() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {/* Pagination */}
+        {pagination.totalPages > 1 && (
+          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+            <div className="flex-1 flex justify-between sm:hidden">
+              <button
+                onClick={() => {
+                  if (pagination.hasPrevPage) {
+                    navigateToPage(pagination.currentPage - 1);
+                  }
+                }}
+                disabled={!pagination.hasPrevPage}
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Trước
+              </button>
+              <button
+                onClick={() => {
+                  if (pagination.hasNextPage) {
+                    navigateToPage(pagination.currentPage + 1);
+                  }
+                }}
+                disabled={!pagination.hasNextPage}
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Sau
+              </button>
+            </div>
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Hiển thị{" "}
+                  <span className="font-medium">
+                    {(pagination.currentPage - 1) * pagination.pageSize + 1}
+                  </span>{" "}
+                  đến{" "}
+                  <span className="font-medium">
+                    {Math.min(
+                      pagination.currentPage * pagination.pageSize,
+                      pagination.totalItems
+                    )}
+                  </span>{" "}
+                  trong tổng số{" "}
+                  <span className="font-medium">{pagination.totalItems}</span> tuần
+                </p>
+              </div>
+              <div>
+                <nav
+                  className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px"
+                  aria-label="Pagination"
+                >
+                  <button
+                    onClick={() => {
+                      if (pagination.hasPrevPage) {
+                        navigateToPage(pagination.currentPage - 1);
+                      }
+                    }}
+                    disabled={!pagination.hasPrevPage}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="sr-only">Trước</span>
+                    <svg
+                      className="h-5 w-5"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                  {/* Page numbers */}
+                  {(() => {
+                    const pages: (number | string)[] = [];
+                    const totalPages = pagination.totalPages;
+                    const currentPage = pagination.currentPage;
+
+                    // Logic hiển thị trang: luôn hiển thị trang đầu, trang cuối, trang hiện tại và các trang xung quanh
+                    for (let i = 1; i <= totalPages; i++) {
+                      if (
+                        i === 1 ||
+                        i === totalPages ||
+                        (i >= currentPage - 1 && i <= currentPage + 1)
+                      ) {
+                        pages.push(i);
+                      } else if (
+                        pages[pages.length - 1] !== "..." &&
+                        (i === currentPage - 2 || i === currentPage + 2)
+                      ) {
+                        pages.push("...");
+                      }
+                    }
+
+                    return pages.map((page, index) => {
+                      if (page === "...") {
+                        return (
+                          <span
+                            key={`ellipsis-${index}`}
+                            className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700"
+                          >
+                            ...
+                          </span>
+                        );
+                      }
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => navigateToPage(page as number)}
+                          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${page === currentPage
+                            ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
+                            : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
+                            }`}
+                        >
+                          {page}
+                        </button>
+                      );
+                    });
+                  })()}
+                  <button
+                    onClick={() => {
+                      if (pagination.hasNextPage) {
+                        navigateToPage(pagination.currentPage + 1);
+                      }
+                    }}
+                    disabled={!pagination.hasNextPage}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <span className="sr-only">Sau</span>
+                    <svg
+                      className="h-5 w-5"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                </nav>
+              </div>
+            </div>
           </div>
         )}
       </div>

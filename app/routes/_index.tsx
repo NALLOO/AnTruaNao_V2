@@ -2,7 +2,7 @@ import type { Route } from "./+types/_index";
 import { Form, useLoaderData, useNavigate } from "react-router";
 import { db } from "~/lib/db.server";
 import { getAdminId } from "~/lib/session.server";
-import { calculateUserTotals } from "~/lib/order.utils";
+import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -234,22 +234,6 @@ export default function Index() {
     }).format(amount);
   };
 
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleDateString("vi-VN", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  };
-
-  const generateQRCodeUrl = (amount: number, userName: string) => {
-    // Format số tiền: chỉ lấy số, không có dấu phẩy
-    const amountValue = Math.round(amount);
-    // Encode tên người đặt cho URL
-    const encodedUserName = encodeURIComponent(userName);
-    // Tạo URL QR code
-    return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedUserName}&accountName=PHAM%20DINH%20NGHIA`;
-  };
 
   const handleWeekChange = (weekId: string) => {
     const url = new URL(window.location.href);
@@ -261,39 +245,27 @@ export default function Index() {
     navigate(url.pathname + url.search);
   };
 
-  if (weeks.length === 0) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-          <p className="text-yellow-800 mb-4">
-            Chưa có tuần nào. Vui lòng tạo tuần mới để bắt đầu.
-          </p>
-          {isAuthenticated && (
-            <a
-              href="/weeks"
-              className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
-              Quản lý tuần
-            </a>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          {isAuthenticated && (
+          <div className="flex items-center gap-4">
             <a
-              href="/weeks"
-              className="text-sm text-blue-600 hover:text-blue-800"
+              href="/payment"
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
             >
-              Quản lý tuần →
+              Đóng họ
             </a>
-          )}
+            {isAuthenticated && (
+              <a
+                href="/weeks"
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                Quản lý tuần →
+              </a>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4">
           <label
@@ -327,213 +299,277 @@ export default function Index() {
         )}
       </div>
 
-      {/* Tổng quan */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">
-            Tổng số đơn hàng
-          </h3>
-          <p className="text-2xl font-bold text-gray-900">{orders.length}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">
-            Tổng số tiền
-          </h3>
-          <p className="text-2xl font-bold text-gray-900">
-            {formatCurrency(totalOrdersAmount)}
+      {weeks.length === 0 ? (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+          <p className="text-yellow-800 mb-4">
+            Chưa có tuần nào. Vui lòng tạo tuần mới để bắt đầu.
           </p>
+          {isAuthenticated && (
+            <a
+              href="/weeks"
+              className="inline-block px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Quản lý tuần
+            </a>
+          )}
         </div>
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-sm font-medium text-gray-500 mb-2">
-            Số người tham gia
-          </h3>
-          <p className="text-2xl font-bold text-gray-900">
-            {userTotals.length}
-          </p>
-        </div>
-      </div>
+      ) : (
+        <>
+          {/* Tổng quan */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">
+                Tổng số đơn hàng
+              </h3>
+              <p className="text-2xl font-bold text-gray-900">{orders.length}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">
+                Tổng số tiền
+              </h3>
+              <p className="text-2xl font-bold text-gray-900">
+                {formatCurrency(totalOrdersAmount)}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">
+                Số người tham gia
+              </h3>
+              <p className="text-2xl font-bold text-gray-900">
+                {userTotals.length}
+              </p>
+            </div>
+          </div>
 
-      {/* Bảng số tiền từng người */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900">
-            Số tiền từng người phải trả
-          </h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tên
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Tổng số tiền
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  QR chuyển tiền
-                </th>
-                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Đã thanh toán
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {userTotals.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="px-6 py-4 text-center text-gray-500"
-                  >
-                    Chưa có dữ liệu trong tuần này
-                  </td>
-                </tr>
-              ) : (
-                userTotals
-                  .sort((a, b) => b.totalAmount - a.totalAmount)
-                  .map((user) => (
-                    <tr
-                      key={user.userId}
-                      className={user.paid ? "bg-green-100" : ""}
-                    >
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {user.userName}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right">
-                        <div className="text-sm font-semibold text-gray-900">
-                          {formatCurrency(user.totalAmount)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {!user.paid && selectedWeek?.isFinalized ? (
-                          <a
-                            href={generateQRCodeUrl(user.totalAmount, user.userName)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
-                          >
-                            <svg
-                              className="w-5 h-5 mr-2"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                              xmlns="http://www.w3.org/2000/svg"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"
-                              />
-                            </svg>
-                            QR Code
-                          </a>
-                        ) : (
-                          <span className="text-sm text-gray-400">
-                            {selectedWeek?.isFinalized ? "—" : "Chưa quyết toán"}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        {isAuthenticated ? (
-                          <>
-                            <Form method="post" className="inline-block">
-                              <input type="hidden" name="intent" value="update-payment" />
-                              <input type="hidden" name="userId" value={user.userId} />
-                              <input type="hidden" name="weekId" value={selectedWeek?.id || ""} />
-                              <select
-                                name="paid"
-                                value={user.paid ? "true" : "false"}
-                                onChange={(e) => {
-                                  const form = e.target.closest("form");
-                                  if (form) {
-                                    form.requestSubmit();
-                                  }
-                                }}
-                                className="px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
-                              >
-                                <option value="false">Chưa thanh toán</option>
-                                <option value="true">Đã thanh toán</option>
-                              </select>
-                            </Form>
-                            {user.paid && user.paidAt && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                {formatDate(new Date(user.paidAt))}
-                              </p>
-                            )}
-                          </>
-                        ) : (
-                          <div className="text-sm text-gray-500">
-                            {user.paid ? "Đã thanh toán" : "Chưa thanh toán"}
-                            {user.paid && user.paidAt && (
-                              <p className="text-xs text-gray-400 mt-1">
-                                {formatDate(new Date(user.paidAt))}
-                              </p>
-                            )}
-                          </div>
-                        )}
+          {/* Bảng số tiền từng người */}
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Số tiền từng người phải trả
+              </h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Tên
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Tổng số tiền
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      QR chuyển tiền
+                    </th>
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Đã thanh toán
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {userTotals.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={4}
+                        className="px-6 py-4 text-center text-gray-500"
+                      >
+                        Chưa có dữ liệu trong tuần này
                       </td>
                     </tr>
-                  ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                  ) : (
+                    userTotals
+                      .sort((a, b) => b.totalAmount - a.totalAmount)
+                      .map((user) => (
+                        <tr
+                          key={user.userId}
+                          className={user.paid ? "bg-green-100" : ""}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">
+                              {user.userName}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <div className="text-sm font-semibold text-gray-900">
+                              {formatCurrency(user.totalAmount)}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            {!user.paid && selectedWeek?.isFinalized ? (
+                              <a
+                                href={generateQRCodeUrl(user.totalAmount, user.userName, selectedWeek.startDate)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                              >
+                                <svg
+                                  className="w-5 h-5 mr-2"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"
+                                  />
+                                </svg>
+                                QR Code
+                              </a>
+                            ) : (
+                              <span className="text-sm text-gray-400">
+                                {selectedWeek?.isFinalized ? "—" : "Chưa quyết toán"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            {isAuthenticated ? (
+                              <>
+                                <Form method="post" className="inline-block">
+                                  <input type="hidden" name="intent" value="update-payment" />
+                                  <input type="hidden" name="userId" value={user.userId} />
+                                  <input type="hidden" name="weekId" value={selectedWeek?.id || ""} />
+                                  <select
+                                    name="paid"
+                                    value={user.paid ? "true" : "false"}
+                                    onChange={(e) => {
+                                      const form = e.target.closest("form");
+                                      if (form) {
+                                        form.requestSubmit();
+                                      }
+                                    }}
+                                    className="px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
+                                  >
+                                    <option value="false">Chưa thanh toán</option>
+                                    <option value="true">Đã thanh toán</option>
+                                  </select>
+                                </Form>
+                                {user.paid && user.paidAt && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {formatDate(new Date(user.paidAt))}
+                                  </p>
+                                )}
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500">
+                                {user.paid ? "Đã thanh toán" : "Chưa thanh toán"}
+                                {user.paid && user.paidAt && (
+                                  <p className="text-xs text-gray-400 mt-1">
+                                    {formatDate(new Date(user.paidAt))}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-      {/* Danh sách đơn hàng */}
-      {orders.length > 0 && (
-        <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-900">
-              Chi tiết đơn hàng
-            </h2>
-          </div>
-          <div className="divide-y divide-gray-200">
-            {orders.map((order) => (
-              <div key={order.id} className="p-6">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-900">
-                      {order.description || `Đơn hàng ${order.id.slice(0, 8)}`}
-                    </h3>
-                    <p className="text-sm text-gray-500">
-                      {formatDate(new Date(order.orderDate))}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm text-gray-500">Tổng tiền</p>
-                    <p className="text-lg font-semibold text-gray-900">
-                      {formatCurrency(order.finalAmount)}
-                    </p>
-                    {order.discount > 0 && (
-                      <p className="text-xs text-green-600">
-                        Đã giảm: {formatCurrency(order.discount)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {order.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex justify-between items-center text-sm"
-                    >
-                      <span className="text-gray-700">
-                        {item.user.name} - {item.itemName}
-                      </span>
-                      <span className="font-medium text-gray-900">
-                        {formatCurrency(item.finalPrice)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+          {/* Danh sách đơn hàng */}
+          {orders.length > 0 && (
+            <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Chi tiết đơn hàng
+                </h2>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="divide-y divide-gray-200">
+                {orders.map((order) => (
+                  <div key={order.id} className="p-6">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-lg font-medium text-gray-900">
+                            {order.description || `Đơn hàng ${order.id.slice(0, 8)}`}
+                          </h3>
+                          {isAuthenticated && !order.week.isFinalized && (
+                            <a
+                              href={`/orders/${order.id}/edit`}
+                              className="inline-flex items-center px-3 py-1 text-sm font-medium text-blue-600 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
+                            >
+                              <svg
+                                className="w-4 h-4 mr-1"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                                xmlns="http://www.w3.org/2000/svg"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                />
+                              </svg>
+                              Chỉnh sửa
+                            </a>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">
+                          {formatDate(new Date(order.orderDate))}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-500">Tổng tiền</p>
+                        <p className="text-lg font-semibold text-gray-900">
+                          {formatCurrency(order.finalAmount)}
+                        </p>
+                        {order.discount > 0 && (
+                          <p className="text-xs text-green-600">
+                            Đã giảm: {formatCurrency(order.discount)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        // Group items theo itemName
+                        const groupedItems = order.items.reduce(
+                          (acc, item) => {
+                            const key = item.itemName;
+                            if (!acc[key]) {
+                              acc[key] = {
+                                itemName: key,
+                                users: [],
+                                unitPrice: item.finalPrice, // Giá của 1 món sau khi trừ giảm giá
+                              };
+                            }
+                            acc[key].users.push(item.user.name);
+                            return acc;
+                          },
+                          {} as Record<
+                            string,
+                            { itemName: string; users: string[]; unitPrice: number }
+                          >
+                        );
+
+                        return Object.values(groupedItems).map((group, index) => (
+                          <div
+                            key={`${order.id}-${group.itemName}-${index}`}
+                            className="flex justify-between items-center text-sm"
+                          >
+                            <span className="text-gray-700">
+                              {group.itemName} ({group.users.join(", ")})
+                            </span>
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(group.unitPrice)}
+                            </span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

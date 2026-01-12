@@ -22,8 +22,16 @@ export default [
     file: "routes/orders.new.tsx",
   },
   {
+    path: "orders/:id/edit",
+    file: "routes/orders.$id.edit.tsx",
+  },
+  {
     path: "members",
     file: "routes/members.tsx",
+  },
+  {
+    path: "payment",
+    file: "routes/payment.tsx",
   },
   {
     path: "weeks",

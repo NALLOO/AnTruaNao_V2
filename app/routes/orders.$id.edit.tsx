@@ -1,4 +1,4 @@
-import type { Route } from "./+types/orders.new";
+import type { Route } from "./+types/orders.$id.edit";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
@@ -11,14 +11,36 @@ import {
 
 export function meta({ }: Route.MetaArgs) {
   return [
-    { title: "Thêm đơn hàng - An Trua Nao" },
-    { name: "description", content: "Thêm đơn hàng mới và chia tiền" },
+    { title: "Chỉnh sửa đơn hàng - An Trua Nao" },
+    { name: "description", content: "Chỉnh sửa đơn hàng và chia tiền" },
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, params }: Route.LoaderArgs) {
   // Yêu cầu đăng nhập
   await requireAdminId(request);
+
+  const orderId = params.id;
+  if (!orderId) {
+    throw new Response("Order ID is required", { status: 400 });
+  }
+
+  // Load order với items và users
+  const order = await db.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: {
+          user: true,
+        },
+      },
+      week: true,
+    },
+  });
+
+  if (!order) {
+    throw new Response("Order not found", { status: 404 });
+  }
 
   const users = await db.user.findMany({
     orderBy: {
@@ -26,23 +48,67 @@ export async function loader({ request }: Route.LoaderArgs) {
     },
   });
 
+  // Lấy các tuần chưa quyết toán, nhưng luôn bao gồm tuần hiện tại của đơn hàng (nếu có)
   const weeks = await db.week.findMany({
     where: {
-      isFinalized: false, // Chỉ lấy các tuần chưa quyết toán
+      OR: [
+        { isFinalized: false }, // Tuần chưa quyết toán
+        { id: order.weekId }, // Luôn bao gồm tuần hiện tại của đơn hàng
+      ],
     },
     orderBy: {
       startDate: "desc",
     },
   });
 
-  return { users, weeks };
+  // Transform order.items thành format OrderItem[] (group theo itemName)
+  const groupedItems = order.items.reduce(
+    (acc, item) => {
+      const key = item.itemName;
+      if (!acc[key]) {
+        acc[key] = {
+          itemName: key,
+          price: item.price,
+          userIds: [],
+          userNames: [],
+        };
+      }
+      acc[key].userIds.push(item.userId);
+      acc[key].userNames.push(item.user.name);
+      return acc;
+    },
+    {} as Record<
+      string,
+      { itemName: string; price: number; userIds: string[]; userNames: string[] }
+    >
+  );
+
+  const initialItems = Object.values(groupedItems);
+
+  return { order, users, weeks, initialItems };
 }
 
-export async function action({ request }: Route.ActionArgs) {
+export async function action({ request, params }: Route.ActionArgs) {
+  await requireAdminId(request);
+
+  const orderId = params.id;
+  if (!orderId) {
+    return Response.json({ error: "Order ID is required" }, { status: 400 });
+  }
+
+  // Kiểm tra order có tồn tại không
+  const existingOrder = await db.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!existingOrder) {
+    return Response.json({ error: "Order not found" }, { status: 404 });
+  }
+
   const formData = await request.formData();
   const description = formData.get("description") as string;
   const weekId = formData.get("weekId") as string;
-  const finalAmount = parseFloat(formData.get("finalAmount") as string); // Tổng tiền phải trả
+  const finalAmount = parseFloat(formData.get("finalAmount") as string);
 
   // Validation: Phải chọn tuần
   if (!weekId) {
@@ -52,7 +118,7 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  // Lấy danh sách items từ form (hỗ trợ multi-select cho người đặt)
+  // Lấy danh sách items từ form
   const itemsData: Array<{
     userId: string;
     userName: string;
@@ -124,8 +190,7 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  // Tính tổng giá các món = Tổng (Giá món × Số người đặt món đó)
-  // Mỗi OrderItem đại diện cho 1 người đặt 1 món, nên tổng = tổng giá tất cả OrderItem
+  // Tính tổng giá các món
   const totalItemsPrice = itemsData.reduce((sum, item) => sum + item.price, 0);
 
   if (isNaN(finalAmount) || finalAmount <= 0) {
@@ -144,33 +209,29 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  // Tính giảm giá tự động: Tổng giá các món - Tổng tiền phải trả
+  // Tính giảm giá tự động
   const discount = calculateDiscount(totalItemsPrice, finalAmount);
-
-  // Tính giảm giá cho mỗi OrderItem (chia đều theo tổng số OrderItem)
-  // Mỗi OrderItem = 1 người đặt 1 món
   const discountPerItem = calculateDiscountPerItem(discount, itemsData.length);
 
   try {
-    // Tạo đơn hàng và các items
-    const order = await db.order.create({
+    // Update order: xóa items cũ và tạo items mới
+    await db.order.update({
+      where: { id: orderId },
       data: {
         weekId,
         description: description.trim(),
-        totalAmount: totalItemsPrice, // Tổng giá các món
-        discount, // Giảm giá tự động tính
-        finalAmount, // Tổng tiền phải trả
+        totalAmount: totalItemsPrice,
+        discount,
+        finalAmount,
         items: {
+          deleteMany: {}, // Xóa tất cả items cũ
           create: itemsData.map((item) => {
-            // Mỗi món trừ đi phần giảm giá chia đều
-            // Vì cùng một món có thể có nhiều người đặt, nhưng giá và giảm giá giống nhau
             const finalPrice = calculateFinalPrice(item.price, discountPerItem);
-
             return {
               userId: item.userId,
               itemName: item.itemName,
               price: item.price,
-              discountShare: discountPerItem, // Phần giảm giá cho mỗi món (chia đều)
+              discountShare: discountPerItem,
               finalPrice,
             };
           }),
@@ -180,34 +241,41 @@ export async function action({ request }: Route.ActionArgs) {
 
     return Response.redirect(new URL("/", request.url).toString(), 302);
   } catch (error) {
-    console.error("Error creating order:", error);
+    console.error("Error updating order:", error);
     return Response.json(
-      { error: "Đã xảy ra lỗi khi tạo đơn hàng" },
+      { error: "Đã xảy ra lỗi khi cập nhật đơn hàng" },
       { status: 500 }
     );
   }
 }
 
 interface OrderItem {
-  userIds: string[]; // Array of user IDs
-  userNames: string[]; // Array of user names
+  userIds: string[];
+  userNames: string[];
   itemName: string;
   price: number;
 }
 
-export default function NewOrder() {
-  const { users, weeks } = useLoaderData<typeof loader>();
+export default function EditOrder() {
+  const { order, users, weeks, initialItems } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
-  const [items, setItems] = useState<OrderItem[]>([
-    { userIds: [], userNames: [], itemName: "", price: 0 },
-  ]);
-  const [finalAmount, setFinalAmount] = useState<number>(0);
-  const [selectedWeekId, setSelectedWeekId] = useState<string>("");
+  const [items, setItems] = useState<OrderItem[]>(initialItems);
+  const [finalAmount, setFinalAmount] = useState<number>(order.finalAmount);
+  const [selectedWeekId, setSelectedWeekId] = useState<string>(order.weekId);
+  const [description, setDescription] = useState<string>(order.description || "");
   const [openDropdowns, setOpenDropdowns] = useState<Set<number>>(new Set());
   const dropdownRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // Update state khi initialItems thay đổi (sau khi load)
+  useEffect(() => {
+    setItems(initialItems);
+    setFinalAmount(order.finalAmount);
+    setSelectedWeekId(order.weekId);
+    setDescription(order.description || "");
+  }, [initialItems, order]);
 
   // Đóng dropdown khi click ra ngoài
   useEffect(() => {
@@ -256,7 +324,7 @@ export default function NewOrder() {
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <h1 className="text-3xl font-bold text-gray-900 mb-8">
-        Thêm đơn hàng mới
+        Chỉnh sửa đơn hàng
       </h1>
 
       {actionData && typeof actionData === "object" && "error" in actionData && (
@@ -299,7 +367,7 @@ export default function NewOrder() {
               <a href="/weeks" className="text-blue-600 hover:underline">
                 tạo tuần mới
               </a>{" "}
-              trước khi thêm đơn hàng.
+              trước khi chỉnh sửa đơn hàng.
             </p>
           )}
         </div>
@@ -316,6 +384,8 @@ export default function NewOrder() {
             type="text"
             id="description"
             name="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
             required
             className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
             placeholder="Ví dụ: Đặt đồ ăn trưa ngày 15/01"
@@ -330,10 +400,8 @@ export default function NewOrder() {
             </label>
             <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700">
               {(() => {
-                // Tính tổng giá các món = Tổng (Giá món × Số người đặt món đó)
                 return items
                   .reduce((sum, item) => {
-                    // Giá món × số người đặt
                     return sum + (item.price || 0) * (item.userIds.length || 0);
                   }, 0)
                   .toLocaleString("vi-VN");
@@ -369,7 +437,6 @@ export default function NewOrder() {
             </label>
             <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-green-50 text-green-700 font-semibold">
               {(() => {
-                // Tính tổng giá các món = Tổng (Giá món × Số người đặt món đó)
                 const totalItemsPrice = items.reduce((sum, item) => {
                   return sum + (item.price || 0) * (item.userIds.length || 0);
                 }, 0);
@@ -638,10 +705,11 @@ export default function NewOrder() {
             disabled={isSubmitting}
             className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? "Đang lưu..." : "Lưu đơn hàng"}
+            {isSubmitting ? "Đang lưu..." : "Cập nhật đơn hàng"}
           </button>
         </div>
       </Form>
     </div>
   );
 }
+

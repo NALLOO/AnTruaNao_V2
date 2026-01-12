@@ -13,6 +13,7 @@ import { getAdminId } from "~/lib/session.server";
 
 export const links: Route.LinksFunction = () => [
   { rel: "stylesheet", href: appStyles },
+  { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
