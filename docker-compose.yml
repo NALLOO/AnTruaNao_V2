@@ -17,26 +17,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   app:
     build:
       context: .
       dockerfile: Dockerfile
-      target: development
+      target: production
     container_name: antruanao_app
     ports:
-      - "3000:3000"
+      - "4000:4000"
     environment:
       DATABASE_URL: postgresql://antruanao:antruanao123@postgres:5432/antruanao_db
-      NODE_ENV: development
+      NODE_ENV: production
+      PORT: 4000
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - .:/app
-      - /app/node_modules
-    # Entrypoint script handles Prisma setup
+    restart: unless-stopped
 
 volumes:
   postgres_data:
-

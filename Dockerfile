@@ -7,16 +7,7 @@ RUN apk add --no-cache openssl libc6-compat
 # Install dependencies
 FROM base AS deps
 COPY package.json package-lock.json ./
-RUN npm ci
-
-# Development stage
-FROM base AS development
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
-EXPOSE 3000
-ENTRYPOINT ["/docker-entrypoint.sh"]
+RUN npm ci --include=dev
 
 # Build stage
 FROM base AS builder
@@ -32,5 +23,5 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/prisma ./prisma
 COPY package.json ./
-EXPOSE 3000
+EXPOSE 4000
 CMD ["npm", "run", "start"]
