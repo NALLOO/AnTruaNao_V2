@@ -19,9 +19,21 @@ RUN npx prisma generate
 # Production stage
 FROM base AS production
 ENV NODE_ENV=production
+
+# Copy dependencies
 COPY --from=deps /app/node_modules ./node_modules
-COPY --from=builder /app/build ./build
+
+# Copy Prisma schema
 COPY --from=builder /app/prisma ./prisma
+
+# Copy built application
+COPY --from=builder /app/build ./build
+
+# Copy package.json
 COPY package.json ./
+
+# Generate Prisma Client trong production stage
+RUN npx prisma generate
+
 EXPOSE 4000
 CMD ["npm", "run", "start"]
