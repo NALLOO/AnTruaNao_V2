@@ -426,7 +426,6 @@ export default function EditOrder() {
               onChange={(e) => setFinalAmount(parseFloat(e.target.value) || 0)}
               required
               min="0"
-              step="1000"
               className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
               placeholder="500000"
             />
@@ -662,7 +661,6 @@ export default function EditOrder() {
                       }}
                       required
                       min="0"
-                      step="1000"
                       className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
                       placeholder="100000"
                     />
