@@ -267,6 +267,7 @@ export default function EditOrder() {
   const [selectedWeekId, setSelectedWeekId] = useState<string>(order.weekId);
   const [description, setDescription] = useState<string>(order.description || "");
   const [openDropdowns, setOpenDropdowns] = useState<Set<number>>(new Set());
+  const [filterTexts, setFilterTexts] = useState<Map<number, string>>(new Map());
   const dropdownRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Update state khi initialItems thay đổi (sau khi load)
@@ -292,6 +293,8 @@ export default function EditOrder() {
 
       if (!clickedInside && openDropdowns.size > 0) {
         setOpenDropdowns(new Set());
+        // Reset all filters when closing dropdowns
+        setFilterTexts(new Map());
       }
     };
 
@@ -523,6 +526,12 @@ export default function EditOrder() {
                               const newSet = new Set(prev);
                               if (newSet.has(index)) {
                                 newSet.delete(index);
+                                // Reset filter when closing
+                                setFilterTexts((prevFilters) => {
+                                  const newFilters = new Map(prevFilters);
+                                  newFilters.delete(index);
+                                  return newFilters;
+                                });
                               } else {
                                 newSet.add(index);
                               }
@@ -553,59 +562,90 @@ export default function EditOrder() {
                           </svg>
                         </button>
                         {openDropdowns.has(index) && (
-                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
-                            {users.map((user) => {
-                              const isSelected = item.userIds.includes(user.id);
-                              return (
-                                <label
-                                  key={user.id}
-                                  className="flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isSelected}
-                                    onChange={() => {
-                                      if (isSelected) {
-                                        // Remove user
-                                        const newUserIds = item.userIds.filter((id) => id !== user.id);
-                                        const newUserNames = users
-                                          .filter((u) => newUserIds.includes(u.id))
-                                          .map((u) => u.name);
-                                        setItems((prevItems) => {
-                                          const newItems = [...prevItems];
-                                          newItems[index] = {
-                                            ...newItems[index],
-                                            userIds: newUserIds,
-                                            userNames: newUserNames,
-                                          };
-                                          return newItems;
-                                        });
-                                      } else {
-                                        // Add user
-                                        const newUserIds = [...item.userIds, user.id];
-                                        const newUserNames = [...item.userNames, user.name];
-                                        setItems((prevItems) => {
-                                          const newItems = [...prevItems];
-                                          newItems[index] = {
-                                            ...newItems[index],
-                                            userIds: newUserIds,
-                                            userNames: newUserNames,
-                                          };
-                                          return newItems;
-                                        });
-                                      }
-                                    }}
-                                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 accent-blue-600"
-                                  />
-                                  <span className="ml-2 text-sm text-gray-700">{user.name}</span>
-                                </label>
-                              );
-                            })}
-                            {users.length === 0 && (
-                              <div className="px-4 py-2 text-sm text-gray-500 text-center">
-                                Chưa có thành viên nào
-                              </div>
-                            )}
+                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-hidden flex flex-col">
+                            {/* Filter input */}
+                            <div className="p-2 border-b border-gray-200">
+                              <input
+                                type="text"
+                                placeholder="Tìm kiếm thành viên..."
+                                value={filterTexts.get(index) || ""}
+                                onChange={(e) => {
+                                  setFilterTexts((prev) => {
+                                    const newMap = new Map(prev);
+                                    newMap.set(index, e.target.value);
+                                    return newMap;
+                                  });
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-full px-3 py-2 text-sm text-gray-900 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                autoFocus
+                              />
+                            </div>
+                            {/* Filtered users list */}
+                            <div className="overflow-auto max-h-48">
+                              {users
+                                .filter((user) => {
+                                  const filterText = filterTexts.get(index) || "";
+                                  if (!filterText) return true;
+                                  return user.name.toLowerCase().includes(filterText.toLowerCase());
+                                })
+                                .map((user) => {
+                                  const isSelected = item.userIds.includes(user.id);
+                                  return (
+                                    <label
+                                      key={user.id}
+                                      className="flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => {
+                                          if (isSelected) {
+                                            // Remove user
+                                            const newUserIds = item.userIds.filter((id) => id !== user.id);
+                                            const newUserNames = users
+                                              .filter((u) => newUserIds.includes(u.id))
+                                              .map((u) => u.name);
+                                            setItems((prevItems) => {
+                                              const newItems = [...prevItems];
+                                              newItems[index] = {
+                                                ...newItems[index],
+                                                userIds: newUserIds,
+                                                userNames: newUserNames,
+                                              };
+                                              return newItems;
+                                            });
+                                          } else {
+                                            // Add user
+                                            const newUserIds = [...item.userIds, user.id];
+                                            const newUserNames = [...item.userNames, user.name];
+                                            setItems((prevItems) => {
+                                              const newItems = [...prevItems];
+                                              newItems[index] = {
+                                                ...newItems[index],
+                                                userIds: newUserIds,
+                                                userNames: newUserNames,
+                                              };
+                                              return newItems;
+                                            });
+                                          }
+                                        }}
+                                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 accent-blue-600"
+                                      />
+                                      <span className="ml-2 text-sm text-gray-700">{user.name}</span>
+                                    </label>
+                                  );
+                                })}
+                              {users.filter((user) => {
+                                const filterText = filterTexts.get(index) || "";
+                                if (!filterText) return true;
+                                return user.name.toLowerCase().includes(filterText.toLowerCase());
+                              }).length === 0 && (
+                                <div className="px-4 py-2 text-sm text-gray-500 text-center">
+                                  Không tìm thấy thành viên
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

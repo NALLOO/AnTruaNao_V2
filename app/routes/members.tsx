@@ -36,35 +36,51 @@ export async function action({ request }: Route.ActionArgs) {
   const intent = formData.get("intent") as string;
 
   if (intent === "create") {
-    const name = formData.get("name") as string;
-    const email = formData.get("email") as string;
+    // Lấy danh sách thành viên từ form (hỗ trợ thêm nhiều người cùng lúc)
+    const members: Array<{ name: string; email: string | null }> = [];
+    let index = 0;
 
-    if (!name || !name.trim()) {
+    while (formData.get(`members[${index}].name`)) {
+      const name = formData.get(`members[${index}].name`) as string;
+      const email = formData.get(`members[${index}].email`) as string;
+
+      if (name && name.trim()) {
+        members.push({
+          name: name.trim(),
+          email: email?.trim() || null,
+        });
+      }
+      index++;
+    }
+
+    if (members.length === 0) {
       return Response.json(
-        { error: "Tên không được để trống" },
+        { error: "Vui lòng nhập ít nhất một thành viên" },
         { status: 400 }
       );
     }
 
     // Kiểm tra tên đã tồn tại chưa
-    const existing = await db.user.findFirst({
+    const names = members.map((m) => m.name);
+    const existing = await db.user.findMany({
       where: {
-        name: name.trim(),
+        name: {
+          in: names,
+        },
       },
     });
 
-    if (existing) {
+    if (existing.length > 0) {
+      const existingNames = existing.map((u) => u.name).join(", ");
       return Response.json(
-        { error: "Tên thành viên đã tồn tại" },
+        { error: `Tên thành viên đã tồn tại: ${existingNames}` },
         { status: 400 }
       );
     }
 
-    await db.user.create({
-      data: {
-        name: name.trim(),
-        email: email?.trim() || null,
-      },
+    // Tạo nhiều thành viên cùng lúc
+    await db.user.createMany({
+      data: members,
     });
 
     return Response.redirect(new URL("/members", request.url).toString(), 302);
@@ -157,6 +173,9 @@ export default function Members() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editName, setEditName] = useState<string>("");
   const [editEmail, setEditEmail] = useState<string>("");
+  const [newMembers, setNewMembers] = useState<Array<{ name: string; email: string }>>([
+    { name: "", email: "" },
+  ]);
 
   // Track khi đang submit để reset sau khi hoàn thành
   const wasSubmitting = useRef(false);
@@ -176,6 +195,7 @@ export default function Members() {
       setEditName("");
       setEditEmail("");
       setShowAddForm(false);
+      setNewMembers([{ name: "", email: "" }]);
       wasSubmitting.current = false;
     }
   }, [navigation.state]);
@@ -200,7 +220,7 @@ export default function Members() {
         <button
           type="button"
           onClick={() => setShowAddForm(!showAddForm)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 cursor-pointer"
         >
           {showAddForm ? "Hủy" : "+ Thêm thành viên"}
         </button>
@@ -214,54 +234,100 @@ export default function Members() {
           </h2>
           <Form method="post" className="space-y-4">
             <input type="hidden" name="intent" value="create" />
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label
-                  htmlFor="new-name"
-                  className="block text-sm font-medium text-gray-700 mb-2"
+            <div className="space-y-4">
+              {newMembers.map((member, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 items-end"
                 >
-                  Tên thành viên *
-                </label>
-                <input
-                  type="text"
-                  id="new-name"
-                  name="name"
-                  required
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="Nhập tên thành viên"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="new-email"
-                  className="block text-sm font-medium text-gray-700 mb-2"
-                >
-                  Email (tùy chọn)
-                </label>
-                <input
-                  type="email"
-                  id="new-email"
-                  name="email"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="email@example.com"
-                />
-              </div>
+                  <div>
+                    <label
+                      htmlFor={`new-name-${index}`}
+                      className="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Tên thành viên *
+                    </label>
+                    <input
+                      type="text"
+                      id={`new-name-${index}`}
+                      name={`members[${index}].name`}
+                      value={member.name}
+                      onChange={(e) => {
+                        const updated = [...newMembers];
+                        updated[index].name = e.target.value;
+                        setNewMembers(updated);
+                      }}
+                      required
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Nhập tên thành viên"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      htmlFor={`new-email-${index}`}
+                      className="block text-sm font-medium text-gray-700 mb-2"
+                    >
+                      Email (tùy chọn)
+                    </label>
+                    <input
+                      type="email"
+                      id={`new-email-${index}`} 
+                      name={`members[${index}].email`}
+                      value={member.email}
+                      onChange={(e) => {
+                        const updated = [...newMembers];
+                        updated[index].email = e.target.value;
+                        setNewMembers(updated);
+                      }}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="email@example.com"
+                    />
+                  </div>
+                  {newMembers.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewMembers(newMembers.filter((_, i) => i !== index));
+                      }}
+                      className="text-gray-400 hover:text-red-600 text-xl leading-none pb-3 cursor-pointer"
+                      title="Xóa dòng này"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
-            <div className="flex justify-end space-x-4">
+            <div className="flex justify-between items-center">
               <button
                 type="button"
-                onClick={() => setShowAddForm(false)}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                onClick={() => {
+                  setNewMembers([...newMembers, { name: "", email: "" }]);
+                }}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
               >
-                Hủy
+                <span className="text-lg">+</span>
+                Thêm dòng
               </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isSubmitting ? "Đang lưu..." : "Thêm thành viên"}
-              </button>
+              <div className="flex space-x-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddForm(false);
+                    setNewMembers([{ name: "", email: "" }]);
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSubmitting ? "Đang lưu..." : "Thêm thành viên"}
+                </button>
+              </div>
             </div>
           </Form>
         </div>
@@ -349,7 +415,7 @@ export default function Members() {
                             <input type="hidden" name="email" value={editEmail} />
                             <button
                               type="submit"
-                              className="text-blue-600 hover:text-blue-900"
+                              className="text-blue-600 hover:text-blue-900 cursor-pointer"
                             >
                               Lưu
                             </button>
@@ -361,7 +427,7 @@ export default function Members() {
                               setEditName("");
                               setEditEmail("");
                             }}
-                            className="text-gray-600 hover:text-gray-900"
+                            className="text-gray-600 hover:text-gray-900 cursor-pointer"
                           >
                             Hủy
                           </button>
@@ -375,7 +441,7 @@ export default function Members() {
                               setEditName(user.name);
                               setEditEmail(user.email || "");
                             }}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="text-blue-600 hover:text-blue-900 cursor-pointer"
                           >
                             Sửa
                           </button>
@@ -385,7 +451,7 @@ export default function Members() {
                               <input type="hidden" name="id" value={user.id} />
                               <button
                                 type="submit"
-                                className="text-red-600 hover:text-red-900"
+                                className="text-red-600 hover:text-red-900 cursor-pointer"
                                 onClick={(e) => {
                                   if (
                                     !confirm(

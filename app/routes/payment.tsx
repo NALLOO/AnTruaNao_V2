@@ -2,7 +2,7 @@ import type { Route } from "./+types/payment";
 import { useLoaderData, useNavigate } from "react-router";
 import { useState } from "react";
 import { db } from "~/lib/db.server";
-import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
+import { calculateUserTotals, generateVNPayPaymentUrl, formatDate } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
     return [
@@ -30,6 +30,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         amount: number;
         userName: string;
         userId: string;
+        paymentUrl: string;
     }> = [];
 
     if (searchName) {
@@ -84,11 +85,21 @@ export async function loader({ request }: Route.LoaderArgs) {
 
                     // Chỉ thêm nếu chưa thanh toán
                     if (!payment || !payment.paid) {
+                        // Tạo payment URL trong loader (server-side)
+                        const paymentUrl = generateVNPayPaymentUrl(
+                            userTotal.totalAmount,
+                            user.name,
+                            week.startDate,
+                            user.id,
+                            week.id
+                        );
+
                         unpaidWeeks.push({
                             week,
                             amount: userTotal.totalAmount,
                             userName: user.name,
                             userId: user.id,
+                            paymentUrl,
                         });
                     }
                 }
@@ -207,7 +218,7 @@ export default function Payment() {
                                             Số tiền cần đóng
                                         </th>
                                         <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            QR chuyển tiền
+                                            Thanh toán
                                         </th>
                                     </tr>
                                 </thead>
@@ -231,10 +242,10 @@ export default function Payment() {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-center">
                                                 <a
-                                                    href={generateQRCodeUrl(item.amount, item.userName, item.week.startDate)}
+                                                    href={item.paymentUrl}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                                                    className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 cursor-pointer"
                                                 >
                                                     <svg
                                                         className="w-5 h-5 mr-2"
@@ -247,10 +258,10 @@ export default function Payment() {
                                                             strokeLinecap="round"
                                                             strokeLinejoin="round"
                                                             strokeWidth={2}
-                                                            d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"
+                                                            d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                                                         />
                                                     </svg>
-                                                    QR Code
+                                                    Thanh toán
                                                 </a>
                                             </td>
                                         </tr>

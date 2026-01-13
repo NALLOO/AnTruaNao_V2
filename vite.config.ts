@@ -9,4 +9,7 @@ export default defineConfig({
     tailwindcss(),
     tsconfigPaths(),
   ],
+  server: {
+    allowedHosts: ["693bfc11ed55.ngrok-free.app"],
+  },
 });

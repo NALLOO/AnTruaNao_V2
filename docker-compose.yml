@@ -26,13 +26,30 @@ services:
     ports:
       - "4000:4000"
     environment:
+      # Database
       DATABASE_URL: postgresql://antruanao:antruanao123@postgres:5432/antruanao_db
       NODE_ENV: production
       PORT: 4000
+      
+      # VNPay Configuration (có thể override từ .env file hoặc docker-compose.override.yml)
+      VNPAY_TMN_CODE: ${VNPAY_TMN_CODE:-YOUR_MERCHANT_CODE}
+      VNPAY_SECRET_KEY: ${VNPAY_SECRET_KEY:-YOUR_SECRET_KEY}
+      VNPAY_URL: ${VNPAY_URL:-https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+      VNPAY_RETURN_URL: ${VNPAY_RETURN_URL:-http://localhost:4000/payment/return}
+      
+      # Session secret (nên set trong production)
+      SESSION_SECRET: ${SESSION_SECRET:-your-secret-key-change-in-production}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # Healthcheck để đảm bảo app đã sẵn sàng
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
   postgres_data:

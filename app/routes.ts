@@ -34,12 +34,20 @@ export default [
     file: "routes/payment.tsx",
   },
   {
+    path: "payment/return",
+    file: "routes/payment.return.tsx",
+  },
+  {
     path: "weeks",
     file: "routes/weeks.tsx",
   },
   {
     path: "api/users",
     file: "routes/api.users.tsx",
+  },
+  {
+    path: "api/vnpay/webhook",
+    file: "routes/api.vnpay.webhook.tsx",
   },
   {
     path: "*",

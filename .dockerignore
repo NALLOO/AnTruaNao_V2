@@ -13,3 +13,5 @@ dist
 *.log
 .vscode
 .idea
+docker-compose.override.yml
+.dockerignore

@@ -2,7 +2,7 @@ import type { Route } from "./+types/_index";
 import { Form, useLoaderData, useNavigate } from "react-router";
 import { db } from "~/lib/db.server";
 import { getAdminId } from "~/lib/session.server";
-import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
+import { calculateUserTotals, formatDate, generateVNPayPaymentUrl } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -144,12 +144,19 @@ export async function loader({ request }: Route.LoaderArgs) {
     payments.map((p) => [p.userId, { paid: p.paid, paidAt: p.paidAt }])
   );
 
-  // Thêm trạng thái thanh toán vào userTotals
-  const userTotalsWithPayment = userTotals.map((user) => ({
-    ...user,
-    paid: paymentMap.get(user.userId)?.paid || false,
-    paidAt: paymentMap.get(user.userId)?.paidAt || null,
-  }));
+  // Thêm trạng thái thanh toán và payment URL vào userTotals
+  const userTotalsWithPayment = userTotals.map((user) => {
+    const paymentUrl = selectedWeek?.isFinalized && !paymentMap.get(user.userId)?.paid
+      ? generateVNPayPaymentUrl(user.totalAmount, user.userName, selectedWeek.startDate, user.userId, selectedWeek.id)
+      : null;
+
+    return {
+      ...user,
+      paid: paymentMap.get(user.userId)?.paid || false,
+      paidAt: paymentMap.get(user.userId)?.paidAt || null,
+      paymentUrl,
+    };
+  });
 
   return {
     userTotals: userTotalsWithPayment,
@@ -395,12 +402,12 @@ export default function Index() {
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center">
-                            {!user.paid && selectedWeek?.isFinalized ? (
+                            {!user.paid && selectedWeek?.isFinalized && user.paymentUrl ? (
                               <a
-                                href={generateQRCodeUrl(user.totalAmount, user.userName, selectedWeek.startDate)}
+                                href={user.paymentUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                                className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 cursor-pointer"
                               >
                                 <svg
                                   className="w-5 h-5 mr-2"
@@ -413,10 +420,10 @@ export default function Index() {
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     strokeWidth={2}
-                                    d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"
+                                    d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                                   />
                                 </svg>
-                                QR Code
+                                Thanh toán
                               </a>
                             ) : (
                               <span className="text-sm text-gray-400">
@@ -431,20 +438,25 @@ export default function Index() {
                                   <input type="hidden" name="intent" value="update-payment" />
                                   <input type="hidden" name="userId" value={user.userId} />
                                   <input type="hidden" name="weekId" value={selectedWeek?.id || ""} />
-                                  <select
-                                    name="paid"
-                                    value={user.paid ? "true" : "false"}
-                                    onChange={(e) => {
-                                      const form = e.target.closest("form");
-                                      if (form) {
-                                        form.requestSubmit();
-                                      }
-                                    }}
-                                    className="px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
-                                  >
-                                    <option value="false">Chưa thanh toán</option>
-                                    <option value="true">Đã thanh toán</option>
-                                  </select>
+                                  <div className="flex items-center justify-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={user.paid}
+                                      onChange={(e) => {
+                                        const form = e.target.closest("form");
+                                        if (form) {
+                                          // Set hidden input value based on checkbox state
+                                          const hiddenInput = form.querySelector('input[type="hidden"][name="paid"]') as HTMLInputElement;
+                                          if (hiddenInput) {
+                                            hiddenInput.value = e.target.checked ? "true" : "false";
+                                          }
+                                          form.requestSubmit();
+                                        }
+                                      }}
+                                      className="w-4 h-4"
+                                    />
+                                  </div>
+                                  <input type="hidden" name="paid" value={user.paid ? "true" : "false"} />
                                 </Form>
                                 {user.paid && user.paidAt && (
                                   <p className="text-xs text-gray-500 mt-1">

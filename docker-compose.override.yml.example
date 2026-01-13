@@ -1,0 +1,15 @@
+# Copy file này thành docker-compose.override.yml để override environment variables
+# File này sẽ được git ignore, không commit lên repository
+
+services:
+  app:
+    environment:
+      # VNPay Configuration - Thay đổi các giá trị này
+      VNPAY_TMN_CODE: your_merchant_code_here
+      VNPAY_SECRET_KEY: your_secret_key_here
+      VNPAY_URL: https://sandbox.vnpayment.vn/paymentv2/vpcpay.html
+      VNPAY_RETURN_URL: http://localhost:4000/payment/return
+      
+      # Session Secret - Nên thay đổi trong production
+      SESSION_SECRET: your-secret-key-change-in-production
+
