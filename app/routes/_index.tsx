@@ -431,20 +431,25 @@ export default function Index() {
                                   <input type="hidden" name="intent" value="update-payment" />
                                   <input type="hidden" name="userId" value={user.userId} />
                                   <input type="hidden" name="weekId" value={selectedWeek?.id || ""} />
-                                  <select
-                                    name="paid"
-                                    value={user.paid ? "true" : "false"}
-                                    onChange={(e) => {
-                                      const form = e.target.closest("form");
-                                      if (form) {
-                                        form.requestSubmit();
-                                      }
-                                    }}
-                                    className="px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
-                                  >
-                                    <option value="false">Chưa thanh toán</option>
-                                    <option value="true">Đã thanh toán</option>
-                                  </select>
+                                  <div className="flex items-center justify-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={user.paid}
+                                      onChange={(e) => {
+                                        const form = e.target.closest("form");
+                                        if (form) {
+                                          // Set hidden input value based on checkbox state
+                                          const hiddenInput = form.querySelector('input[type="hidden"][name="paid"]') as HTMLInputElement;
+                                          if (hiddenInput) {
+                                            hiddenInput.value = e.target.checked ? "true" : "false";
+                                          }
+                                          form.requestSubmit();
+                                        }
+                                      }}
+                                      className="w-4 h-4"
+                                    />
+                                  </div>
+                                  <input type="hidden" name="paid" value={user.paid ? "true" : "false"} />
                                 </Form>
                                 {user.paid && user.paidAt && (
                                   <p className="text-xs text-gray-500 mt-1">
