@@ -1,5 +1,6 @@
 import type { Route } from "./+types/_index";
 import { Form, useLoaderData, useNavigate } from "react-router";
+import { useState } from "react";
 import { db } from "~/lib/db.server";
 import { getAdminId } from "~/lib/session.server";
 import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
@@ -226,6 +227,12 @@ export default function Index() {
   const { userTotals, totalOrdersAmount, orders, weeks, selectedWeek, isAuthenticated } =
     useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const [qrPopup, setQrPopup] = useState<{ isOpen: boolean; qrUrl: string; userName: string; amount: number }>({
+    isOpen: false,
+    qrUrl: "",
+    userName: "",
+    amount: 0,
+  });
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("vi-VN", {
@@ -243,6 +250,25 @@ export default function Index() {
       url.searchParams.delete("weekId");
     }
     navigate(url.pathname + url.search);
+  };
+
+  const handleOpenQR = (amount: number, userName: string, startDate: Date) => {
+    const qrUrl = generateQRCodeUrl(amount, userName, startDate);
+    setQrPopup({
+      isOpen: true,
+      qrUrl,
+      userName,
+      amount,
+    });
+  };
+
+  const handleCloseQR = () => {
+    setQrPopup({
+      isOpen: false,
+      qrUrl: "",
+      userName: "",
+      amount: 0,
+    });
   };
 
   return (
@@ -396,11 +422,10 @@ export default function Index() {
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center">
                             {!user.paid && selectedWeek?.isFinalized ? (
-                              <a
-                                href={generateQRCodeUrl(user.totalAmount, user.userName, selectedWeek.startDate)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                              <button
+                                type="button"
+                                onClick={() => handleOpenQR(user.totalAmount, user.userName, selectedWeek.startDate)}
+                                className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
                               >
                                 <svg
                                   className="w-5 h-5 mr-2"
@@ -417,7 +442,7 @@ export default function Index() {
                                   />
                                 </svg>
                                 QR Code
-                              </a>
+                              </button>
                             ) : (
                               <span className="text-sm text-gray-400">
                                 {selectedWeek?.isFinalized ? "—" : "Chưa quyết toán"}
@@ -575,6 +600,60 @@ export default function Index() {
             </div>
           )}
         </>
+      )}
+
+      {/* QR Code Popup */}
+      {qrPopup.isOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          onClick={handleCloseQR}
+        >
+          <div className="fixed inset-0 bg-black opacity-50"></div>
+          <div
+            className="relative bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4 opacity-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                QR Code thanh toán
+              </h3>
+              <button
+                type="button"
+                onClick={handleCloseQR}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg
+                  className="w-6 h-6"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="text-center mb-4">
+              <p className="text-sm text-gray-600 mb-1">
+                <span className="font-medium">{qrPopup.userName}</span>
+              </p>
+              <p className="text-lg font-bold text-gray-900">
+                {formatCurrency(qrPopup.amount)}
+              </p>
+            </div>
+            <div className="flex justify-center mb-4">
+              <img
+                src={qrPopup.qrUrl}
+                alt="QR Code thanh toán"
+                className="w-full max-w-xs border border-gray-200 rounded"
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
