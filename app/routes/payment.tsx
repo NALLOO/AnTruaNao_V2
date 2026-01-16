@@ -1,6 +1,6 @@
 import type { Route } from "./+types/payment";
 import { useLoaderData, useNavigate } from "react-router";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { db } from "~/lib/db.server";
 import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
 
@@ -13,7 +13,14 @@ export function meta({ }: Route.MetaArgs) {
 
 export async function loader({ request }: Route.LoaderArgs) {
     const url = new URL(request.url);
-    const searchName = url.searchParams.get("searchName")?.trim() || null;
+    const userId = url.searchParams.get("userId")?.trim() || null;
+
+    // Lấy tất cả users để hiển thị trong select
+    const allUsers = await db.user.findMany({
+        orderBy: {
+            name: "asc",
+        },
+    });
 
     // Lấy tất cả tuần đã quyết toán
     const allWeeks = await db.week.findMany({
@@ -32,83 +39,103 @@ export async function loader({ request }: Route.LoaderArgs) {
         userId: string;
     }> = [];
 
-    if (searchName) {
-        // Tìm user có tên chính xác (case-insensitive)
-        const matchingUsers = await db.user.findMany({
-            where: {
-                name: {
-                    equals: searchName,
-                    mode: "insensitive",
-                },
-            },
+    if (userId) {
+        // Tìm user theo userId
+        const user = await db.user.findUnique({
+            where: { id: userId },
         });
 
-        if (matchingUsers.length > 0) {
-            // Với mỗi user, tìm các tuần mà họ chưa đóng tiền
-            for (const user of matchingUsers) {
-                for (const week of allWeeks) {
-                    // Lấy đơn hàng trong tuần
-                    const weekOrders = await db.order.findMany({
-                        where: { weekId: week.id },
-                        include: {
-                            items: {
-                                include: { user: true },
-                            },
+        if (user) {
+            // Với user này, tìm các tuần mà họ chưa đóng tiền
+            for (const week of allWeeks) {
+                // Lấy đơn hàng trong tuần
+                const weekOrders = await db.order.findMany({
+                    where: { weekId: week.id },
+                    include: {
+                        items: {
+                            include: { user: true },
                         },
-                    });
+                    },
+                });
 
-                    // Tính userTotals cho tuần này
-                    const weekItems = weekOrders.flatMap((order) =>
-                        order.items.map((item) => ({
-                            userId: item.userId,
-                            userName: item.user.name,
-                            finalPrice: item.finalPrice,
-                        }))
-                    );
+                // Tính userTotals cho tuần này
+                const weekItems = weekOrders.flatMap((order) =>
+                    order.items.map((item) => ({
+                        userId: item.userId,
+                        userName: item.user.name,
+                        finalPrice: item.finalPrice,
+                    }))
+                );
 
-                    const weekUserTotals = calculateUserTotals(weekItems);
+                const weekUserTotals = calculateUserTotals(weekItems);
 
-                    // Tìm user trong danh sách
-                    const userTotal = weekUserTotals.find((u) => u.userId === user.id);
-                    if (!userTotal) continue; // User không có đơn hàng trong tuần này
+                // Tìm user trong danh sách
+                const userTotal = weekUserTotals.find((u) => u.userId === user.id);
+                if (!userTotal) continue; // User không có đơn hàng trong tuần này
 
-                    // Lấy trạng thái thanh toán
-                    const payment = await db.payment.findUnique({
-                        where: {
-                            userId_weekId: {
-                                userId: user.id,
-                                weekId: week.id,
-                            },
-                        },
-                    });
-
-                    // Chỉ thêm nếu chưa thanh toán
-                    if (!payment || !payment.paid) {
-                        unpaidWeeks.push({
-                            week,
-                            amount: userTotal.totalAmount,
-                            userName: user.name,
+                // Lấy trạng thái thanh toán
+                const payment = await db.payment.findUnique({
+                    where: {
+                        userId_weekId: {
                             userId: user.id,
-                        });
-                    }
+                            weekId: week.id,
+                        },
+                    },
+                });
+
+                // Chỉ thêm nếu chưa thanh toán
+                if (!payment || !payment.paid) {
+                    unpaidWeeks.push({
+                        week,
+                        amount: userTotal.totalAmount,
+                        userName: user.name,
+                        userId: user.id,
+                    });
                 }
             }
         }
     }
 
-    return { unpaidWeeks, searchName };
+    return { unpaidWeeks, allUsers, selectedUserId: userId };
 }
 
 export default function Payment() {
-    const { unpaidWeeks, searchName } = useLoaderData<typeof loader>();
+    const { unpaidWeeks, allUsers, selectedUserId } = useLoaderData<typeof loader>();
     const navigate = useNavigate();
-    const [searchInput, setSearchInput] = useState<string>(searchName || "");
+    const [selectedUser, setSelectedUser] = useState<string>(selectedUserId || "");
+    const [searchInput, setSearchInput] = useState<string>("");
+    const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
     const [qrPopup, setQrPopup] = useState<{ isOpen: boolean; qrUrl: string; userName: string; amount: number }>({
         isOpen: false,
         qrUrl: "",
         userName: "",
         amount: 0,
     });
+
+    // Lấy tên user đã chọn
+    const selectedUserName = allUsers.find((u) => u.id === selectedUser)?.name || "";
+
+    // Filter users dựa trên search input
+    const filteredUsers = allUsers.filter((user) =>
+        user.name.toLowerCase().includes(searchInput.toLowerCase())
+    );
+
+    // Click outside để đóng dropdown
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+                setIsDropdownOpen(false);
+                setSearchInput("");
+            }
+        };
+
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, []);
 
     const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat("vi-VN", {
@@ -118,26 +145,35 @@ export default function Payment() {
     };
 
 
-    const handleSearch = (name: string) => {
+    const handleUserChange = (userId: string) => {
+        setSelectedUser(userId);
+        setSearchInput("");
+        setIsDropdownOpen(false);
         const url = new URL(window.location.href);
-        if (name.trim()) {
-            url.searchParams.set("searchName", name.trim());
+        if (userId) {
+            url.searchParams.set("userId", userId);
         } else {
-            url.searchParams.delete("searchName");
+            url.searchParams.delete("userId");
         }
         navigate(url.pathname + url.search);
     };
 
-    const handleSearchSubmit = (e: React.FormEvent) => {
-        e.preventDefault();
-        handleSearch(searchInput);
+    const handleClearSelection = () => {
+        setSelectedUser("");
+        setSearchInput("");
+        setIsDropdownOpen(false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("userId");
+        navigate(url.pathname + url.search);
     };
 
-    const handleClearSearch = () => {
-        setSearchInput("");
-        const url = new URL(window.location.href);
-        url.searchParams.delete("searchName");
-        navigate(url.pathname + url.search);
+    const handleInputFocus = () => {
+        setIsDropdownOpen(true);
+    };
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        setSearchInput(e.target.value);
+        setIsDropdownOpen(true);
     };
 
     const handleOpenQR = (amount: number, userName: string, startDate: Date) => {
@@ -172,56 +208,106 @@ export default function Payment() {
                     </a>
                 </div>
 
-                {/* Search input */}
-                <form onSubmit={handleSearchSubmit} className="flex items-center gap-4">
+                {/* Searchable Select user */}
+                <div className="flex items-center gap-4">
                     <label
-                        htmlFor="search-name"
+                        htmlFor="select-user"
                         className="text-sm font-medium text-gray-700 whitespace-nowrap"
                     >
-                        Tìm kiếm theo tên:
+                        Chọn người:
                     </label>
                     <div className="flex items-center gap-2 flex-1 max-w-md">
-                        <input
-                            type="text"
-                            id="search-name"
-                            value={searchInput}
-                            onChange={(e) => setSearchInput(e.target.value)}
-                            placeholder="Nhập tên để tìm kiếm"
-                            className="flex-1 px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
-                        />
-                        {searchName && (
+                        <div className="relative flex-1" ref={dropdownRef}>
+                            <div className="relative">
+                                <input
+                                    ref={inputRef}
+                                    type="text"
+                                    id="select-user"
+                                    value={isDropdownOpen ? searchInput : selectedUserName || ""}
+                                    onChange={handleInputChange}
+                                    onFocus={handleInputFocus}
+                                    placeholder={selectedUser ? selectedUserName : "-- Chọn người --"}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsDropdownOpen(!isDropdownOpen);
+                                        if (!isDropdownOpen) {
+                                            setSearchInput("");
+                                            inputRef.current?.focus();
+                                        }
+                                    }}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                >
+                                    <svg
+                                        className={`w-5 h-5 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                    >
+                                        <path
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            strokeWidth={2}
+                                            d="M19 9l-7 7-7-7"
+                                        />
+                                    </svg>
+                                </button>
+                            </div>
+                            {isDropdownOpen && (
+                                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto">
+                                    {filteredUsers.length > 0 ? (
+                                        <ul className="py-1">
+                                            {filteredUsers.map((user) => (
+                                                <li
+                                                    key={user.id}
+                                                    onClick={() => handleUserChange(user.id)}
+                                                    className={`px-4 py-2 cursor-pointer text-gray-900 hover:bg-blue-50 ${selectedUser === user.id ? "bg-blue-100 font-medium" : ""
+                                                        }`}
+                                                >
+                                                    {user.name}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <div className="px-4 py-2 text-gray-500 text-sm">
+                                            Không tìm thấy
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        {selectedUserId && (
                             <button
                                 type="button"
-                                onClick={handleClearSearch}
+                                onClick={handleClearSelection}
                                 className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800"
-                                title="Xóa tìm kiếm"
+                                title="Xóa lựa chọn"
                             >
                                 ✕
                             </button>
                         )}
-                        <button
-                            type="submit"
-                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                        >
-                            Tìm kiếm
-                        </button>
                     </div>
-                </form>
+                </div>
             </div>
 
             {/* Table hiển thị các tuần chưa đóng tiền */}
-            {searchName ? (
+            {selectedUserId ? (
                 unpaidWeeks.length > 0 ? (
                     <div className="bg-white rounded-lg shadow overflow-hidden">
                         <div className="px-6 py-4 border-b border-gray-200">
                             <h2 className="text-xl font-semibold text-gray-900">
-                                Các tuần {searchName} chưa đóng tiền
+                                Các tuần {unpaidWeeks[0]?.userName || ""} chưa đóng tiền
                             </h2>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-gray-50">
                                     <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            Tên người
+                                        </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                             Tên tuần
                                         </th>
@@ -239,6 +325,11 @@ export default function Payment() {
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {unpaidWeeks.map((item, index) => (
                                         <tr key={`${item.week.id}-${item.userId}-${index}`}>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="text-sm font-medium text-gray-900">
+                                                    {item.userName}
+                                                </div>
+                                            </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="text-sm font-medium text-gray-900">
                                                     {item.week.name || "Không có tên"}
@@ -286,7 +377,7 @@ export default function Payment() {
                 ) : (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
                         <p className="text-yellow-800">
-                            Không có tuần nào mà {searchName} chưa đóng tiền.
+                            Không có tuần nào chưa đóng tiền cho người này.
                         </p>
                     </div>
                 )

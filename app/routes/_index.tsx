@@ -241,6 +241,10 @@ export default function Index() {
     }).format(amount);
   };
 
+  // Tính tổng số tiền chưa thanh toán
+  const totalUnpaidAmount = userTotals
+    .filter((user) => !user.paid)
+    .reduce((sum, user) => sum + user.totalAmount, 0);
 
   const handleWeekChange = (weekId: string) => {
     const url = new URL(window.location.href);
@@ -342,7 +346,7 @@ export default function Index() {
       ) : (
         <>
           {/* Tổng quan */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
             <div className="bg-white rounded-lg shadow p-6">
               <h3 className="text-sm font-medium text-gray-500 mb-2">
                 Tổng số đơn hàng
@@ -355,6 +359,14 @@ export default function Index() {
               </h3>
               <p className="text-2xl font-bold text-gray-900">
                 {formatCurrency(totalOrdersAmount)}
+              </p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-sm font-medium text-gray-500 mb-2">
+                Tổng số tiền chưa thanh toán
+              </h3>
+              <p className="text-2xl font-bold text-gray-900">
+                {formatCurrency(totalUnpaidAmount)}
               </p>
             </div>
             <div className="bg-white rounded-lg shadow p-6">
@@ -404,7 +416,14 @@ export default function Index() {
                     </tr>
                   ) : (
                     userTotals
-                      .sort((a, b) => b.totalAmount - a.totalAmount)
+                      .sort((a, b) => {
+                        // Ưu tiên: chưa thanh toán lên trên
+                        if (a.paid !== b.paid) {
+                          return a.paid ? 1 : -1; // false (chưa thanh toán) lên trước
+                        }
+                        // Nếu cùng trạng thái, sort theo số tiền giảm dần
+                        return b.totalAmount - a.totalAmount;
+                      })
                       .map((user) => (
                         <tr
                           key={user.userId}
