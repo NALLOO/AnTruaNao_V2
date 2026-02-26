@@ -1,6 +1,6 @@
 import type { Route } from "./+types/members";
 import { Form, useLoaderData, useNavigation } from "react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 
@@ -22,13 +22,22 @@ export async function loader({ request }: Route.LoaderArgs) {
           orderItems: true,
         },
       },
+      orderItems: {
+        select: { finalPrice: true },
+      },
     },
   });
 
-  // Sắp xếp theo số đơn hàng giảm dần
-  users.sort((a, b) => b._count.orderItems - a._count.orderItems);
+  // Tính tổng số tiền mỗi thành viên (tổng finalPrice các orderItem)
+  const usersWithTotal = users.map(({ orderItems, ...user }) => ({
+    ...user,
+    totalAmount: orderItems.reduce((sum, item) => sum + item.finalPrice, 0),
+  }));
 
-  return { users };
+  // Sắp xếp theo số đơn hàng giảm dần
+  usersWithTotal.sort((a, b) => b._count.orderItems - a._count.orderItems);
+
+  return { users: usersWithTotal };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -176,6 +185,33 @@ export default function Members() {
   const [newMembers, setNewMembers] = useState<Array<{ name: string; email: string }>>([
     { name: "", email: "" },
   ]);
+
+  // Sắp xếp: theo số đơn hàng hoặc tổng tiền, asc/desc
+  type SortColumn = "orderCount" | "totalAmount";
+  const [sortBy, setSortBy] = useState<SortColumn>("orderCount");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const sortedUsers = useMemo(() => {
+    const list = [...users];
+    list.sort((a, b) => {
+      if (sortBy === "orderCount") {
+        const d = a._count.orderItems - b._count.orderItems;
+        return sortDir === "asc" ? d : -d;
+      }
+      const d = a.totalAmount - b.totalAmount;
+      return sortDir === "asc" ? d : -d;
+    });
+    return list;
+  }, [users, sortBy, sortDir]);
+
+  const toggleSort = (column: SortColumn) => {
+    if (sortBy === column) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(column);
+      setSortDir("desc");
+    }
+  };
 
   // Track khi đang submit để reset sau khi hoàn thành
   const wasSubmitting = useRef(false);
@@ -351,7 +387,30 @@ export default function Members() {
                   Email
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Số đơn hàng
+                  <span className="inline-flex items-center gap-1">
+                    Số đơn hàng
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("orderCount")}
+                      className="p-0.5 rounded hover:bg-gray-200 text-gray-600 hover:text-gray-900 cursor-pointer"
+                      title={sortBy === "orderCount" ? (sortDir === "desc" ? "Giảm dần (click để tăng dần)" : "Tăng dần (click để giảm dần)") : "Sắp xếp theo số đơn hàng"}
+                    >
+                      {sortBy === "orderCount" ? (sortDir === "desc" ? " ↓" : " ↑") : " ⇅"}
+                    </button>
+                  </span>
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <span className="inline-flex items-center gap-1">
+                    Tổng số tiền
+                    <button
+                      type="button"
+                      onClick={() => toggleSort("totalAmount")}
+                      className="p-0.5 rounded hover:bg-gray-200 text-gray-600 hover:text-gray-900 cursor-pointer"
+                      title={sortBy === "totalAmount" ? (sortDir === "desc" ? "Giảm dần (click để tăng dần)" : "Tăng dần (click để giảm dần)") : "Sắp xếp theo tổng tiền"}
+                    >
+                      {sortBy === "totalAmount" ? (sortDir === "desc" ? " ↓" : " ↑") : " ⇅"}
+                    </button>
+                  </span>
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Thao tác
@@ -362,14 +421,14 @@ export default function Members() {
               {users.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="px-6 py-4 text-center text-gray-500"
                   >
                     Chưa có thành viên nào
                   </td>
                 </tr>
               ) : (
-                users.map((user) => (
+                sortedUsers.map((user) => (
                   <tr key={user.id}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {editingId === user.id ? (
@@ -403,6 +462,11 @@ export default function Members() {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
                         {user._count.orderItems}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {user.totalAmount.toLocaleString("vi-VN")} ₫
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
