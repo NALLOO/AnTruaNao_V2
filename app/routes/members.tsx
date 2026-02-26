@@ -16,9 +16,6 @@ export async function loader({ request }: Route.LoaderArgs) {
   await requireAdminId(request);
 
   const users = await db.user.findMany({
-    orderBy: {
-      name: "asc",
-    },
     include: {
       _count: {
         select: {
@@ -27,6 +24,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       },
     },
   });
+
+  // Sắp xếp theo số đơn hàng giảm dần
+  users.sort((a, b) => b._count.orderItems - a._count.orderItems);
 
   return { users };
 }
