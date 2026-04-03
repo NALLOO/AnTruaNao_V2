@@ -2,7 +2,7 @@ import type { Route } from "./+types/payment";
 import { useLoaderData, useNavigate } from "react-router";
 import { useState, useRef, useEffect } from "react";
 import { db } from "~/lib/db.server";
-import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
+import { calculateUserTotals, generateQRCodeUrl, generateTotalQRCodeUrl, formatDate } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
     return [
@@ -185,6 +185,21 @@ export default function Payment() {
             amount,
         });
     };
+
+    const handleOpenTotalQR = (amount: number, userName: string) => {
+        const qrUrl = generateTotalQRCodeUrl(amount, userName);
+        setQrPopup({
+            isOpen: true,
+            qrUrl,
+            userName,
+            amount,
+        });
+    };
+
+    const totalUnpaidAmount =
+        selectedUserId && unpaidWeeks.length > 0
+            ? Math.round(unpaidWeeks.reduce((sum, item) => sum + item.amount, 0) * 100) / 100
+            : 0;
 
     const handleCloseQR = () => {
         setQrPopup({
@@ -371,6 +386,49 @@ export default function Payment() {
                                         </tr>
                                     ))}
                                 </tbody>
+                                <tfoot className="bg-gray-50 border-t-2 border-gray-300">
+                                    <tr>
+                                        <td
+                                            colSpan={3}
+                                            className="px-6 py-4 text-right text-sm font-semibold text-gray-900"
+                                        >
+                                            Tổng cộng
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                                            <div className="text-sm font-bold text-gray-900">
+                                                {formatCurrency(totalUnpaidAmount)}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    handleOpenTotalQR(
+                                                        totalUnpaidAmount,
+                                                        unpaidWeeks[0]?.userName || selectedUserName
+                                                    )
+                                                }
+                                                className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                            >
+                                                <svg
+                                                    className="w-5 h-5 mr-2"
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                >
+                                                    <path
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                        strokeWidth={2}
+                                                        d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"
+                                                    />
+                                                </svg>
+                                                QR tổng
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tfoot>
                             </table>
                         </div>
                     </div>

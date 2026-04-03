@@ -99,3 +99,13 @@ export function generateQRCodeUrl(
   return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=PHAM%20DINH%20NGHIA`;
 }
 
+/**
+ * QR một lần cho tổng tiền cơm nhiều tuần (nội dung: "tên người tien com tong cong")
+ */
+export function generateTotalQRCodeUrl(amount: number, userName: string): string {
+  const amountValue = Math.round(amount);
+  const addInfo = `${userName} tien com tong cong`;
+  const encodedAddInfo = encodeURIComponent(addInfo);
+  return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=PHAM%20DINH%20NGHIA`;
+}
+
