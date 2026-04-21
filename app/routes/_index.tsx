@@ -127,7 +127,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const userTotals = calculateUserTotals(allItems);
 
-  // Tính tổng số tiền của tất cả đơn hàng
+  // Tính tổng số tiền của tất cả đơn hàng (finalAmount có thể âm khi ghi nợ)
   const totalOrdersAmount = orders.reduce(
     (sum, order) => sum + order.finalAmount,
     0

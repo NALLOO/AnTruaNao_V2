@@ -87,8 +87,14 @@ export async function action({ request }: Route.ActionArgs) {
       userIndex++;
     }
 
-    // Validation: Mỗi món phải có ít nhất 1 người đặt
-    if (itemName && !isNaN(price) && price > 0) {
+    // Mỗi dòng có tên món: giá hợp lệ (có thể âm = nợ), ít nhất 1 người — mỗi người một OrderItem giống món thường
+    if (itemName && itemName.trim()) {
+      if (!Number.isFinite(price)) {
+        return Response.json(
+          { error: `Món "${itemName}" có giá không hợp lệ` },
+          { status: 400 }
+        );
+      }
       if (userIds.length === 0) {
         return Response.json(
           { error: `Món "${itemName}" chưa có người đặt. Vui lòng chọn ít nhất một người đặt.` },
@@ -96,12 +102,11 @@ export async function action({ request }: Route.ActionArgs) {
         );
       }
 
-      // Tạo OrderItem cho mỗi người đặt món này
       userIds.forEach((userId, idx) => {
         itemsData.push({
           userId,
           userName: userNames[idx] || "",
-          itemName,
+          itemName: itemName.trim(),
           price,
         });
       });
@@ -128,9 +133,9 @@ export async function action({ request }: Route.ActionArgs) {
   // Mỗi OrderItem đại diện cho 1 người đặt 1 món, nên tổng = tổng giá tất cả OrderItem
   const totalItemsPrice = itemsData.reduce((sum, item) => sum + item.price, 0);
 
-  if (isNaN(finalAmount) || finalAmount <= 0) {
+  if (!Number.isFinite(finalAmount)) {
     return Response.json(
-      { error: "Tổng tiền phải trả phải lớn hơn 0" },
+      { error: "Tổng tiền phải trả không hợp lệ" },
       { status: 400 }
     );
   }
@@ -204,7 +209,7 @@ export default function NewOrder() {
   const [items, setItems] = useState<OrderItem[]>([
     { userIds: [], userNames: [], itemName: "", price: 0 },
   ]);
-  const [finalAmount, setFinalAmount] = useState<number>(0);
+  const [finalAmountStr, setFinalAmountStr] = useState("");
   const [selectedWeekId, setSelectedWeekId] = useState<string>("");
   const [openDropdowns, setOpenDropdowns] = useState<Set<number>>(new Set());
   const [filterTexts, setFilterTexts] = useState<Map<number, string>>(new Map());
@@ -343,7 +348,7 @@ export default function NewOrder() {
               })()}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              (Tổng giá = Giá món × Số người đặt món đó)
+              (Tổng giá = Giá món × Số người đặt; giá món có thể âm để ghi nợ theo người)
             </p>
           </div>
           <div>
@@ -357,17 +362,19 @@ export default function NewOrder() {
               type="number"
               id="finalAmount"
               name="finalAmount"
-              value={finalAmount || ""}
-              onChange={(e) => setFinalAmount(parseFloat(e.target.value) || 0)}
+              value={finalAmountStr}
+              onChange={(e) => setFinalAmountStr(e.target.value)}
               required
-              min="0"
               className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="500000"
+              placeholder="500000 hoặc số âm để ghi nợ"
             />
+            <p className="text-xs text-gray-500 mt-1">
+              Nhập số âm (ví dụ -50000) để ghi khoản nợ — tổng tuần trên dashboard sẽ giảm tương ứng.
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Giảm giá (VND)
+              Giảm giá / điều chỉnh (VND)
             </label>
             <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-green-50 text-green-700 font-semibold">
               {(() => {
@@ -375,12 +382,14 @@ export default function NewOrder() {
                 const totalItemsPrice = items.reduce((sum, item) => {
                   return sum + (item.price || 0) * (item.userIds.length || 0);
                 }, 0);
+                const n = parseFloat(finalAmountStr);
+                const finalAmount = Number.isFinite(n) ? n : 0;
                 const discount = totalItemsPrice - finalAmount;
-                return discount > 0 ? discount.toLocaleString("vi-VN") : "0";
+                return discount !== 0 ? discount.toLocaleString("vi-VN") : "0";
               })()}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              (Tự động tính: Tổng giá - Tổng tiền phải trả)
+              (Tự động: Tổng giá − Tổng tiền phải trả; số âm nghĩa là điều chỉnh tăng so với tổng giá món)
             </p>
           </div>
         </div>
@@ -629,13 +638,19 @@ export default function NewOrder() {
                       name={`items[${index}].price`}
                       value={item.price === 0 ? "" : item.price}
                       onChange={(e) => {
-                        const val = e.target.value === "" ? 0 : parseFloat(e.target.value) || 0;
-                        handleItemChange(index, "price", val);
+                        const t = e.target.value;
+                        if (t === "") {
+                          handleItemChange(index, "price", 0);
+                          return;
+                        }
+                        const n = parseFloat(t);
+                        if (Number.isFinite(n)) {
+                          handleItemChange(index, "price", n);
+                        }
                       }}
                       required
-                      min="0"
                       className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="100000"
+                      placeholder="100000 hoặc -50000 (nợ)"
                     />
                   </div>
                 </div>
