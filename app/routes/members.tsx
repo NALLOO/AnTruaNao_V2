@@ -3,6 +3,7 @@ import { Form, useLoaderData, useNavigation } from "react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
+import { calculateUserTotals, applyShippingToUserTotals } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -15,23 +16,61 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Yêu cầu đăng nhập
   await requireAdminId(request);
 
-  const users = await db.user.findMany({
-    include: {
-      _count: {
-        select: {
-          orderItems: true,
+  const [users, allItems, ordersForShip] = await Promise.all([
+    db.user.findMany({
+      include: {
+        _count: {
+          select: {
+            orderItems: true,
+          },
+        },
+        orderItems: {
+          select: { finalPrice: true },
         },
       },
-      orderItems: {
-        select: { finalPrice: true },
+    }),
+    db.orderItem.findMany({
+      include: { user: true },
+    }),
+    db.order.findMany({
+      select: {
+        shippingFee: true,
+        items: {
+          select: {
+            userId: true,
+            user: { select: { name: true } },
+          },
+        },
       },
-    },
-  });
+    }),
+  ]);
 
-  // Tính tổng số tiền mỗi thành viên (tổng finalPrice các orderItem)
+  const itemTotals = calculateUserTotals(
+    allItems.map((item) => ({
+      userId: item.userId,
+      userName: item.user.name,
+      finalPrice: item.finalPrice,
+    }))
+  );
+
+  const totalsWithShip = applyShippingToUserTotals(
+    itemTotals,
+    ordersForShip.map((o) => ({
+      shippingFee: o.shippingFee ?? 0,
+      items: o.items.map((it) => ({
+        userId: it.userId,
+        userName: it.user.name,
+      })),
+    }))
+  );
+
+  const amountByUserId = new Map(
+    totalsWithShip.map((t) => [t.userId, t.totalAmount])
+  );
+
   const usersWithTotal = users.map(({ orderItems, ...user }) => ({
     ...user,
-    totalAmount: orderItems.reduce((sum, item) => sum + item.finalPrice, 0),
+    totalAmount: amountByUserId.get(user.id) ?? 0,
   }));
 
   // Sắp xếp theo số đơn hàng giảm dần

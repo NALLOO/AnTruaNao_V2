@@ -3,7 +3,7 @@ import { Form, useActionData, useLoaderData, useNavigation, useNavigate } from "
 import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
-import { calculateUserTotals } from "~/lib/order.utils";
+import { calculateUserTotals, applyShippingToUserTotals } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -57,7 +57,17 @@ export async function loader({ request }: Route.LoaderArgs) {
         }))
       );
 
-      const weekUserTotals = calculateUserTotals(weekItems);
+      const weekUserTotalsBase = calculateUserTotals(weekItems);
+      const weekUserTotals = applyShippingToUserTotals(
+        weekUserTotalsBase,
+        weekOrders.map((o) => ({
+          shippingFee: o.shippingFee ?? 0,
+          items: o.items.map((i) => ({
+            userId: i.userId,
+            userName: i.user.name,
+          })),
+        }))
+      );
 
       // Lấy trạng thái thanh toán
       const weekPayments = await db.payment.findMany({

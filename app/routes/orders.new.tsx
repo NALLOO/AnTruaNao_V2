@@ -44,6 +44,11 @@ export async function action({ request }: Route.ActionArgs) {
   const description = formData.get("description") as string;
   const weekId = formData.get("weekId") as string;
   const finalAmount = parseFloat(formData.get("finalAmount") as string); // Tổng tiền phải trả
+  const shippingFeeRaw = formData.get("shippingFee");
+  const shippingFee =
+    shippingFeeRaw === null || shippingFeeRaw === ""
+      ? 0
+      : parseFloat(String(shippingFeeRaw));
 
   // Validation: Phải chọn tuần
   if (!weekId) {
@@ -134,9 +139,18 @@ export async function action({ request }: Route.ActionArgs) {
   // Mỗi OrderItem đại diện cho 1 người đặt 1 món, nên tổng = tổng giá tất cả OrderItem
   const totalItemsPrice = itemsData.reduce((sum, item) => sum + item.price, 0);
 
-  if (totalItemsPrice === 0) {
+  if (!Number.isFinite(shippingFee) || shippingFee < 0) {
     return Response.json(
-      { error: "Tổng giá các món bằng 0 — không thể chia tỷ lệ thanh toán" },
+      { error: "Tiền ship không hợp lệ (phải là số ≥ 0)" },
+      { status: 400 }
+    );
+  }
+
+  const grossTotal = totalItemsPrice + shippingFee;
+
+  if (grossTotal === 0) {
+    return Response.json(
+      { error: "Tổng đơn (món + ship) bằng 0 — không thể tính tỷ lệ thanh toán" },
       { status: 400 }
     );
   }
@@ -148,20 +162,23 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  if (finalAmount > totalItemsPrice) {
+  if (finalAmount > grossTotal) {
     return Response.json(
       {
-        error: `Tổng tiền phải trả (${finalAmount.toLocaleString()} VND) không thể lớn hơn tổng giá các món (${totalItemsPrice.toLocaleString()} VND)`,
+        error: `Tổng tiền phải trả (${finalAmount.toLocaleString()} VND) không thể lớn hơn tổng đơn (${grossTotal.toLocaleString()} VND: món + ship)`,
       },
       { status: 400 }
     );
   }
 
-  // Tính giảm giá tự động: Tổng giá các món - Tổng tiền phải trả
-  const discount = calculateDiscount(totalItemsPrice, finalAmount);
+  const discount = calculateDiscount(grossTotal, finalAmount);
 
-  // Chia theo tỷ lệ: (tổng phải trả / tổng giá) × giá từng dòng
-  const paymentRatio = calculatePaymentRatio(totalItemsPrice, finalAmount);
+  // Tỷ lệ: tiền phải trả / (tổng món + ship); từng dòng = giá món × tỷ lệ (không chia ship lẻ)
+  const paymentRatio = calculatePaymentRatio(
+    totalItemsPrice,
+    shippingFee,
+    finalAmount
+  );
 
   try {
     // Tạo đơn hàng và các items
@@ -169,9 +186,10 @@ export async function action({ request }: Route.ActionArgs) {
       data: {
         weekId,
         description: description.trim(),
-        totalAmount: totalItemsPrice, // Tổng giá các món
-        discount, // Giảm giá tự động tính
-        finalAmount, // Tổng tiền phải trả
+        totalAmount: grossTotal,
+        shippingFee,
+        discount,
+        finalAmount,
         items: {
           create: itemsData.map((item) => {
             const finalPrice = calculateProportionalFinalPrice(
@@ -222,6 +240,7 @@ export default function NewOrder() {
     { userIds: [], userNames: [], itemName: "", price: 0 },
   ]);
   const [finalAmountStr, setFinalAmountStr] = useState("");
+  const [shippingFeeStr, setShippingFeeStr] = useState("");
   const [selectedWeekId, setSelectedWeekId] = useState<string>("");
   const [openDropdowns, setOpenDropdowns] = useState<Set<number>>(new Set());
   const [filterTexts, setFilterTexts] = useState<Map<number, string>>(new Map());
@@ -342,67 +361,108 @@ export default function NewOrder() {
           />
         </div>
 
-        {/* Tổng giá các món và Tổng tiền phải trả */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Hàng 1: tổng món, ship, tổng đơn — Hàng 2: tiền phải trả, giảm/voucher */}
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Tổng giá các món (VND)
             </label>
             <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700">
               {(() => {
-                // Tính tổng giá các món = Tổng (Giá món × Số người đặt món đó)
                 return items
                   .reduce((sum, item) => {
-                    // Giá món × số người đặt
                     return sum + (item.price || 0) * (item.userIds.length || 0);
                   }, 0)
                   .toLocaleString("vi-VN");
               })()}
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              (Tổng giá = Giá món × Số người đặt; giá món có thể âm để ghi nợ theo người)
+              Giá món × số người đặt; giá có thể âm (ghi nợ)
             </p>
           </div>
           <div>
             <label
-              htmlFor="finalAmount"
+              htmlFor="shippingFee"
               className="block text-sm font-medium text-gray-700 mb-2"
             >
-              Tổng tiền phải trả (VND) *
+              Tiền ship (VND)
             </label>
             <input
               type="number"
-              id="finalAmount"
-              name="finalAmount"
-              value={finalAmountStr}
-              onChange={(e) => setFinalAmountStr(e.target.value)}
-              required
+              id="shippingFee"
+              name="shippingFee"
+              min={0}
+              step="any"
+              value={shippingFeeStr}
+              onChange={(e) => setShippingFeeStr(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="500000 hoặc số âm để ghi nợ"
+              placeholder="0"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Nhập số âm (ví dụ -50000) để ghi khoản nợ — tổng tuần trên dashboard sẽ giảm tương ứng.
+              Mặc định 0. Cộng vào tổng đơn; tỷ lệ chia món = tiền phải trả ÷ (món + ship).
             </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Giảm giá / điều chỉnh (VND)
+              Tổng đơn (món + ship)
             </label>
-            <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-green-50 text-green-700 font-semibold">
+            <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700">
               {(() => {
-                // Tính tổng giá các món = Tổng (Giá món × Số người đặt món đó)
                 const totalItemsPrice = items.reduce((sum, item) => {
                   return sum + (item.price || 0) * (item.userIds.length || 0);
                 }, 0);
-                const n = parseFloat(finalAmountStr);
-                const finalAmount = Number.isFinite(n) ? n : 0;
-                const discount = totalItemsPrice - finalAmount;
-                return discount !== 0 ? discount.toLocaleString("vi-VN") : "0";
+                const sf = parseFloat(shippingFeeStr);
+                const shippingFee = Number.isFinite(sf) ? Math.max(0, sf) : 0;
+                return (totalItemsPrice + shippingFee).toLocaleString("vi-VN");
               })()}
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              (Tự động: Tổng giá − Tổng tiền phải trả; số âm nghĩa là điều chỉnh tăng so với tổng giá món)
-            </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label
+                htmlFor="finalAmount"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                Tổng tiền phải trả (VND) *
+              </label>
+              <input
+                type="number"
+                id="finalAmount"
+                name="finalAmount"
+                value={finalAmountStr}
+                onChange={(e) => setFinalAmountStr(e.target.value)}
+                required
+                className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="500000 hoặc số âm để ghi nợ"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Không lớn hơn (món + ship). Âm có thể dùng ghi nợ.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Giảm / voucher (VND)
+              </label>
+              <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-green-50 text-green-700 font-semibold">
+                {(() => {
+                  const totalItemsPrice = items.reduce((sum, item) => {
+                    return sum + (item.price || 0) * (item.userIds.length || 0);
+                  }, 0);
+                  const sf = parseFloat(shippingFeeStr);
+                  const shippingFee = Number.isFinite(sf) ? Math.max(0, sf) : 0;
+                  const grossTotal = totalItemsPrice + shippingFee;
+                  const n = parseFloat(finalAmountStr);
+                  const finalAmount = Number.isFinite(n) ? n : 0;
+                  const discount = calculateDiscount(grossTotal, finalAmount);
+                  return discount !== 0 ? discount.toLocaleString("vi-VN") : "0";
+                })()}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Tự động: tổng đơn (món + ship) − tổng tiền phải trả.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -500,9 +560,8 @@ export default function NewOrder() {
                               : `Đã chọn ${item.userIds.length} người`}
                           </span>
                           <svg
-                            className={`w-5 h-5 text-gray-400 transition-transform ${
-                              openDropdowns.has(index) ? "rotate-180" : ""
-                            }`}
+                            className={`w-5 h-5 text-gray-400 transition-transform ${openDropdowns.has(index) ? "rotate-180" : ""
+                              }`}
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -595,10 +654,10 @@ export default function NewOrder() {
                                 if (!filterText) return true;
                                 return user.name.toLowerCase().includes(filterText.toLowerCase());
                               }).length === 0 && (
-                                <div className="px-4 py-2 text-sm text-gray-500 text-center">
-                                  Không tìm thấy thành viên
-                                </div>
-                              )}
+                                  <div className="px-4 py-2 text-sm text-gray-500 text-center">
+                                    Không tìm thấy thành viên
+                                  </div>
+                                )}
                             </div>
                           </div>
                         )}

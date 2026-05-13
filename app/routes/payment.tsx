@@ -2,7 +2,7 @@ import type { Route } from "./+types/payment";
 import { useLoaderData, useNavigate } from "react-router";
 import { useState, useRef, useEffect } from "react";
 import { db } from "~/lib/db.server";
-import { calculateUserTotals, generateQRCodeUrl, generateTotalQRCodeUrl, formatDate } from "~/lib/order.utils";
+import { calculateUserTotals, generateQRCodeUrl, generateTotalQRCodeUrl, formatDate, applyShippingToUserTotals } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
     return [
@@ -67,7 +67,17 @@ export async function loader({ request }: Route.LoaderArgs) {
                     }))
                 );
 
-                const weekUserTotals = calculateUserTotals(weekItems);
+                const weekUserTotalsBase = calculateUserTotals(weekItems);
+                const weekUserTotals = applyShippingToUserTotals(
+                  weekUserTotalsBase,
+                  weekOrders.map((o) => ({
+                    shippingFee: o.shippingFee ?? 0,
+                    items: o.items.map((i) => ({
+                      userId: i.userId,
+                      userName: i.user.name,
+                    })),
+                  }))
+                );
 
                 // Tìm user trong danh sách
                 const userTotal = weekUserTotals.find((u) => u.userId === user.id);

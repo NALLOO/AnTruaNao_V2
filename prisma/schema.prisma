@@ -43,9 +43,10 @@ model Order {
   id            String      @id @default(cuid())
   weekId        String      // Tuần mà đơn hàng thuộc về
   orderDate     DateTime    @default(now())
-  totalAmount   Float       // Tổng tiền trước giảm giá
-  discount      Float       @default(0) // Số tiền giảm giá
-  finalAmount   Float       // Tổng tiền sau giảm giá
+  totalAmount   Float       // Tổng tiền trước giảm giá (tổng món + tiền ship)
+  discount      Float       @default(0) // Tổng niêm yết đơn (món + ship) − tổng tiền phải trả
+  finalAmount   Float       // Tổng tiền thực trả (= tổng niêm yết đơn − discount)
+  shippingFee   Float       @default(0) // Tiền ship (cộng vào tổng đơn; không cộng lẻ theo người — tỷ lệ trên món+ship)
   description   String?     // Mô tả đơn hàng
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt

@@ -1,12 +1,12 @@
 /**
- * Tính toán giảm giá tự động
- * Giảm giá = Tổng giá các món - Tổng tiền phải trả
+ * Chênh lệch giữa tổng niêm yết và tiền thực trả:
+ * tham số 1 − tham số 2 (ví dụ: tổng món hoặc tổng món+ship, và tổng tiền phải trả)
  */
 export function calculateDiscount(
-  totalItemsPrice: number,
+  grossBeforePay: number,
   finalAmount: number
 ): number {
-  return Math.round((totalItemsPrice - finalAmount) * 100) / 100;
+  return Math.round((grossBeforePay - finalAmount) * 100) / 100;
 }
 
 /**
@@ -32,13 +32,15 @@ export function calculateFinalPrice(
   return Math.round((itemPrice - discountPerItem) * 100) / 100;
 }
 
-/** Tỷ lệ thanh toán sau voucher: tổng tiền phải trả / tổng giá các dòng món */
+/** Tỷ lệ thanh toán: tiền phải trả / (tổng món + tiền ship) */
 export function calculatePaymentRatio(
-  totalItemsPrice: number,
+  itemsSubtotal: number,
+  shippingFee: number,
   finalAmount: number
 ): number {
-  if (totalItemsPrice === 0) return 0;
-  return finalAmount / totalItemsPrice;
+  const grossTotal = itemsSubtotal + shippingFee;
+  if (grossTotal === 0) return 0;
+  return finalAmount / grossTotal;
 }
 
 /** Giá thực trả từng dòng = giá món × tỷ lệ thanh toán */
@@ -92,6 +94,19 @@ export function calculateUserTotals(
     userName: data.name,
     totalAmount: Math.round(data.total * 100) / 100,
   }));
+}
+
+/**
+ * Tiền ship không cộng thêm lên từng người ở đây (finalPrice đã nhân tỷ lệ trên tổng món+ship).
+ */
+export function applyShippingToUserTotals(
+  itemTotals: UserTotal[],
+  _orders: Array<{
+    shippingFee: number;
+    items: Array<{ userId: string; userName: string }>;
+  }>
+): UserTotal[] {
+  return itemTotals.map((t) => ({ ...t }));
 }
 
 /**

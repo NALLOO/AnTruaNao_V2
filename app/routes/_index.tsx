@@ -3,7 +3,12 @@ import { Form, useLoaderData, useNavigate } from "react-router";
 import { useState } from "react";
 import { db } from "~/lib/db.server";
 import { getAdminId } from "~/lib/session.server";
-import { calculateUserTotals, generateQRCodeUrl, formatDate } from "~/lib/order.utils";
+import {
+  calculateUserTotals,
+  generateQRCodeUrl,
+  formatDate,
+  applyShippingToUserTotals,
+} from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
   return [
@@ -55,7 +60,17 @@ export async function loader({ request }: Route.LoaderArgs) {
           }))
         );
 
-        const weekUserTotals = calculateUserTotals(weekItems);
+        const weekUserTotalsBase = calculateUserTotals(weekItems);
+        const weekUserTotals = applyShippingToUserTotals(
+          weekUserTotalsBase,
+          weekOrders.map((o) => ({
+            shippingFee: o.shippingFee ?? 0,
+            items: o.items.map((i) => ({
+              userId: i.userId,
+              userName: i.user.name,
+            })),
+          }))
+        );
 
         // Lấy trạng thái thanh toán
         const weekPayments = await db.payment.findMany({
@@ -125,7 +140,17 @@ export async function loader({ request }: Route.LoaderArgs) {
     }))
   );
 
-  const userTotals = calculateUserTotals(allItems);
+  const userTotalsBase = calculateUserTotals(allItems);
+  const userTotals = applyShippingToUserTotals(
+    userTotalsBase,
+    orders.map((o) => ({
+      shippingFee: o.shippingFee ?? 0,
+      items: o.items.map((i) => ({
+        userId: i.userId,
+        userName: i.user.name,
+      })),
+    }))
+  );
 
   // Tính tổng số tiền của tất cả đơn hàng (finalAmount có thể âm khi ghi nợ)
   const totalOrdersAmount = orders.reduce(
@@ -569,9 +594,14 @@ export default function Index() {
                         <p className="text-lg font-semibold text-gray-900">
                           {formatCurrency(order.finalAmount)}
                         </p>
+                        {(order.shippingFee ?? 0) > 0 && (
+                          <p className="text-xs text-gray-600">
+                            Ship: {formatCurrency(order.shippingFee ?? 0)}
+                          </p>
+                        )}
                         {order.discount > 0 && (
                           <p className="text-xs text-green-600">
-                            Đã giảm: {formatCurrency(order.discount)}
+                            Đã giảm / điều chỉnh: {formatCurrency(order.discount)}
                           </p>
                         )}
                       </div>
