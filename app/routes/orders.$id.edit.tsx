@@ -4,10 +4,11 @@ import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 import {
+  allocateFinalAmountToPortions,
   calculateDiscount,
   calculatePaymentRatio,
-  calculateProportionalDiscountShare,
-  calculateProportionalFinalPrice,
+  calculatePortionDiscountShare,
+  calculateShippingPerPortion,
 } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -242,6 +243,13 @@ export async function action({ request, params }: Route.ActionArgs) {
     shippingFee,
     finalAmount
   );
+  const itemPrices = itemsData.map((item) => item.price);
+  const finalPrices = allocateFinalAmountToPortions(
+    itemPrices,
+    shippingFee,
+    finalAmount
+  );
+  const shipPer = calculateShippingPerPortion(shippingFee, itemsData.length);
 
   try {
     // Update order: xóa items cũ và tạo items mới
@@ -256,14 +264,13 @@ export async function action({ request, params }: Route.ActionArgs) {
         finalAmount,
         items: {
           deleteMany: {}, // Xóa tất cả items cũ
-          create: itemsData.map((item) => {
-            const finalPrice = calculateProportionalFinalPrice(
+          create: itemsData.map((item, idx) => {
+            const finalPrice = finalPrices[idx]!;
+            const discountShare = calculatePortionDiscountShare(
               item.price,
+              shipPer,
+              finalPrice,
               paymentRatio
-            );
-            const discountShare = calculateProportionalDiscountShare(
-              item.price,
-              finalPrice
             );
             return {
               userId: item.userId,
@@ -478,7 +485,7 @@ export default function EditOrder() {
                 placeholder="0"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Mặc định 0. Tỷ lệ chia món = tiền phải trả ÷ (món + ship).
+                Mặc định 0. Mỗi suất: tiền phải trả ÷ (tổng món + ship) × (giá suất + ship ÷ số suất).
               </p>
             </div>
             <div>

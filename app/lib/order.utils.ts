@@ -43,20 +43,55 @@ export function calculatePaymentRatio(
   return finalAmount / grossTotal;
 }
 
-/** Giá thực trả từng dòng = giá món × tỷ lệ thanh toán */
-export function calculateProportionalFinalPrice(
-  itemPrice: number,
-  paymentRatio: number
+/** Ship chia đều theo số suất (số dòng OrderItem). */
+export function calculateShippingPerPortion(
+  shippingFee: number,
+  portionCount: number
 ): number {
-  return Math.round(itemPrice * paymentRatio * 100) / 100;
+  if (portionCount === 0) return 0;
+  return shippingFee / portionCount;
 }
 
-/** Phần chiết khấu gán cho dòng (giá niêm yết − giá thực trả) */
-export function calculateProportionalDiscountShare(
+/**
+ * Phân bổ tiền phải trả cho từng suất:
+ * suất i = tỷ lệ × (giá món i + ship / N). Tổng (lý thuyết) = finalAmount.
+ * Làm tròn 2 chữ số và cộng phần lệch vào suất cuối để tổng khớp finalAmount.
+ */
+export function allocateFinalAmountToPortions(
+  itemPrices: number[],
+  shippingFee: number,
+  finalAmount: number
+): number[] {
+  const n = itemPrices.length;
+  if (n === 0) return [];
+  const itemsSubtotal = itemPrices.reduce((a, b) => a + b, 0);
+  const grossTotal = itemsSubtotal + shippingFee;
+  if (grossTotal === 0) return itemPrices.map(() => 0);
+  const ratio = finalAmount / grossTotal;
+  const shipPer = shippingFee / n;
+  const rounded = itemPrices.map((p) =>
+    Math.round((p + shipPer) * ratio * 100) / 100
+  );
+  const sum = rounded.reduce((a, b) => a + b, 0);
+  const diff = Math.round((finalAmount - sum) * 100) / 100;
+  if (diff !== 0) {
+    rounded[n - 1] = Math.round((rounded[n - 1] + diff) * 100) / 100;
+  }
+  return rounded;
+}
+
+/**
+ * Chiết khấu theo niêm yết một suất (giá món + phần ship phân bổ) so với trả thực.
+ */
+export function calculatePortionDiscountShare(
   itemPrice: number,
-  finalPrice: number
+  shippingPerPortion: number,
+  finalPrice: number,
+  paymentRatio: number
 ): number {
-  return Math.round((itemPrice - finalPrice) * 100) / 100;
+  if (paymentRatio === 0) return 0;
+  const nominal = itemPrice + shippingPerPortion;
+  return Math.round((nominal - finalPrice / paymentRatio) * 100) / 100;
 }
 
 /**
@@ -97,7 +132,7 @@ export function calculateUserTotals(
 }
 
 /**
- * Tiền ship không cộng thêm lên từng người ở đây (finalPrice đã nhân tỷ lệ trên tổng món+ship).
+ * Ship đã gộp vào từng suất qua finalPrice (allocateFinalAmountToPortions).
  */
 export function applyShippingToUserTotals(
   itemTotals: UserTotal[],

@@ -4,10 +4,11 @@ import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 import {
+  allocateFinalAmountToPortions,
   calculateDiscount,
   calculatePaymentRatio,
-  calculateProportionalDiscountShare,
-  calculateProportionalFinalPrice,
+  calculatePortionDiscountShare,
+  calculateShippingPerPortion,
 } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -173,12 +174,19 @@ export async function action({ request }: Route.ActionArgs) {
 
   const discount = calculateDiscount(grossTotal, finalAmount);
 
-  // Tỷ lệ: tiền phải trả / (tổng món + ship); từng dòng = giá món × tỷ lệ (không chia ship lẻ)
+  // Mỗi suất: (final / (món + ship)) × (giá suất + ship / N); chỉnh làm tròn để tổng = finalAmount
   const paymentRatio = calculatePaymentRatio(
     totalItemsPrice,
     shippingFee,
     finalAmount
   );
+  const itemPrices = itemsData.map((item) => item.price);
+  const finalPrices = allocateFinalAmountToPortions(
+    itemPrices,
+    shippingFee,
+    finalAmount
+  );
+  const shipPer = calculateShippingPerPortion(shippingFee, itemsData.length);
 
   try {
     // Tạo đơn hàng và các items
@@ -191,14 +199,13 @@ export async function action({ request }: Route.ActionArgs) {
         discount,
         finalAmount,
         items: {
-          create: itemsData.map((item) => {
-            const finalPrice = calculateProportionalFinalPrice(
+          create: itemsData.map((item, idx) => {
+            const finalPrice = finalPrices[idx]!;
+            const discountShare = calculatePortionDiscountShare(
               item.price,
+              shipPer,
+              finalPrice,
               paymentRatio
-            );
-            const discountShare = calculateProportionalDiscountShare(
-              item.price,
-              finalPrice
             );
 
             return {
@@ -400,7 +407,7 @@ export default function NewOrder() {
               placeholder="0"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Mặc định 0. Cộng vào tổng đơn; tỷ lệ chia món = tiền phải trả ÷ (món + ship).
+              Mặc định 0. Mỗi suất: tiền phải trả ÷ (tổng món + ship) × (giá suất + ship ÷ số suất).
             </p>
           </div>
           <div>
