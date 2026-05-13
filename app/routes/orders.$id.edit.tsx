@@ -5,8 +5,9 @@ import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 import {
   calculateDiscount,
-  calculateDiscountPerItem,
-  calculateFinalPrice,
+  calculatePaymentRatio,
+  calculateProportionalDiscountShare,
+  calculateProportionalFinalPrice,
 } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -197,6 +198,13 @@ export async function action({ request, params }: Route.ActionArgs) {
   // Tính tổng giá các món
   const totalItemsPrice = itemsData.reduce((sum, item) => sum + item.price, 0);
 
+  if (totalItemsPrice === 0) {
+    return Response.json(
+      { error: "Tổng giá các món bằng 0 — không thể chia tỷ lệ thanh toán" },
+      { status: 400 }
+    );
+  }
+
   if (!Number.isFinite(finalAmount)) {
     return Response.json(
       { error: "Tổng tiền phải trả không hợp lệ" },
@@ -215,7 +223,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   // Tính giảm giá tự động
   const discount = calculateDiscount(totalItemsPrice, finalAmount);
-  const discountPerItem = calculateDiscountPerItem(discount, itemsData.length);
+  const paymentRatio = calculatePaymentRatio(totalItemsPrice, finalAmount);
 
   try {
     // Update order: xóa items cũ và tạo items mới
@@ -230,12 +238,19 @@ export async function action({ request, params }: Route.ActionArgs) {
         items: {
           deleteMany: {}, // Xóa tất cả items cũ
           create: itemsData.map((item) => {
-            const finalPrice = calculateFinalPrice(item.price, discountPerItem);
+            const finalPrice = calculateProportionalFinalPrice(
+              item.price,
+              paymentRatio
+            );
+            const discountShare = calculateProportionalDiscountShare(
+              item.price,
+              finalPrice
+            );
             return {
               userId: item.userId,
               itemName: item.itemName,
               price: item.price,
-              discountShare: discountPerItem,
+              discountShare,
               finalPrice,
             };
           }),

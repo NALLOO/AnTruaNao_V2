@@ -5,8 +5,9 @@ import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 import {
   calculateDiscount,
-  calculateDiscountPerItem,
-  calculateFinalPrice,
+  calculatePaymentRatio,
+  calculateProportionalDiscountShare,
+  calculateProportionalFinalPrice,
 } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -133,6 +134,13 @@ export async function action({ request }: Route.ActionArgs) {
   // Mỗi OrderItem đại diện cho 1 người đặt 1 món, nên tổng = tổng giá tất cả OrderItem
   const totalItemsPrice = itemsData.reduce((sum, item) => sum + item.price, 0);
 
+  if (totalItemsPrice === 0) {
+    return Response.json(
+      { error: "Tổng giá các món bằng 0 — không thể chia tỷ lệ thanh toán" },
+      { status: 400 }
+    );
+  }
+
   if (!Number.isFinite(finalAmount)) {
     return Response.json(
       { error: "Tổng tiền phải trả không hợp lệ" },
@@ -152,9 +160,8 @@ export async function action({ request }: Route.ActionArgs) {
   // Tính giảm giá tự động: Tổng giá các món - Tổng tiền phải trả
   const discount = calculateDiscount(totalItemsPrice, finalAmount);
 
-  // Tính giảm giá cho mỗi OrderItem (chia đều theo tổng số OrderItem)
-  // Mỗi OrderItem = 1 người đặt 1 món
-  const discountPerItem = calculateDiscountPerItem(discount, itemsData.length);
+  // Chia theo tỷ lệ: (tổng phải trả / tổng giá) × giá từng dòng
+  const paymentRatio = calculatePaymentRatio(totalItemsPrice, finalAmount);
 
   try {
     // Tạo đơn hàng và các items
@@ -167,15 +174,20 @@ export async function action({ request }: Route.ActionArgs) {
         finalAmount, // Tổng tiền phải trả
         items: {
           create: itemsData.map((item) => {
-            // Mỗi món trừ đi phần giảm giá chia đều
-            // Vì cùng một món có thể có nhiều người đặt, nhưng giá và giảm giá giống nhau
-            const finalPrice = calculateFinalPrice(item.price, discountPerItem);
+            const finalPrice = calculateProportionalFinalPrice(
+              item.price,
+              paymentRatio
+            );
+            const discountShare = calculateProportionalDiscountShare(
+              item.price,
+              finalPrice
+            );
 
             return {
               userId: item.userId,
               itemName: item.itemName,
               price: item.price,
-              discountShare: discountPerItem, // Phần giảm giá cho mỗi món (chia đều)
+              discountShare,
               finalPrice,
             };
           }),

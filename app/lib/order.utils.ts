@@ -32,6 +32,31 @@ export function calculateFinalPrice(
   return Math.round((itemPrice - discountPerItem) * 100) / 100;
 }
 
+/** Tỷ lệ thanh toán sau voucher: tổng tiền phải trả / tổng giá các dòng món */
+export function calculatePaymentRatio(
+  totalItemsPrice: number,
+  finalAmount: number
+): number {
+  if (totalItemsPrice === 0) return 0;
+  return finalAmount / totalItemsPrice;
+}
+
+/** Giá thực trả từng dòng = giá món × tỷ lệ thanh toán */
+export function calculateProportionalFinalPrice(
+  itemPrice: number,
+  paymentRatio: number
+): number {
+  return Math.round(itemPrice * paymentRatio * 100) / 100;
+}
+
+/** Phần chiết khấu gán cho dòng (giá niêm yết − giá thực trả) */
+export function calculateProportionalDiscountShare(
+  itemPrice: number,
+  finalPrice: number
+): number {
+  return Math.round((itemPrice - finalPrice) * 100) / 100;
+}
+
 /**
  * Tính tổng số tiền từng người phải trả trong một khoảng thời gian
  */
