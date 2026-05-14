@@ -52,6 +52,78 @@ export function calculateShippingPerPortion(
   return shippingFee / portionCount;
 }
 
+/** Một suất đặt món (sau khi nhân số lượng — mỗi suất một phần chia ship / giảm giá). */
+export interface OrderFormPortion {
+  userId: string;
+  itemName: string;
+  price: number;
+}
+
+/**
+ * Đọc `items[i].itemName`, `items[i].price`, `items[i].lines[j].userId|quantity` từ FormData.
+ * Mỗi dòng người đặt có số lượng ≥ 1 được mở rộng thành nhiều suất (cùng giá đơn vị).
+ */
+export function parseOrderItemsFromFormData(formData: FormData):
+  | { ok: true; portions: OrderFormPortion[] }
+  | { ok: false; error: string } {
+  const portions: OrderFormPortion[] = [];
+  let index = 0;
+  while (formData.get(`items[${index}].itemName`)) {
+    const itemName = formData.get(`items[${index}].itemName`) as string;
+    const price = parseFloat(formData.get(`items[${index}].price`) as string);
+
+    if (itemName && itemName.trim()) {
+      if (!Number.isFinite(price)) {
+        return {
+          ok: false,
+          error: `Món "${itemName}" có giá không hợp lệ`,
+        };
+      }
+
+      const lines: Array<{ userId: string; quantity: number }> = [];
+      let lineIndex = 0;
+      while (formData.has(`items[${index}].lines[${lineIndex}].userId`)) {
+        const userId = String(
+          formData.get(`items[${index}].lines[${lineIndex}].userId`) ?? ""
+        ).trim();
+        const qtyRaw = formData.get(
+          `items[${index}].lines[${lineIndex}].quantity`
+        );
+        let quantity = parseInt(String(qtyRaw), 10);
+        if (!Number.isFinite(quantity) || quantity < 1) {
+          quantity = 1;
+        }
+
+        if (userId) {
+          lines.push({ userId, quantity });
+        }
+        lineIndex++;
+      }
+
+      if (lines.length === 0) {
+        return {
+          ok: false,
+          error: `Món "${itemName.trim()}" chưa có người đặt. Vui lòng chọn ít nhất một người đặt.`,
+        };
+      }
+
+      const trimmedName = itemName.trim();
+      for (const { userId, quantity } of lines) {
+        for (let k = 0; k < quantity; k++) {
+          portions.push({
+            userId,
+            itemName: trimmedName,
+            price,
+          });
+        }
+      }
+    }
+    index++;
+  }
+
+  return { ok: true, portions };
+}
+
 /**
  * Phân bổ tiền phải trả cho từng suất:
  * suất i = tỷ lệ × (giá món i + ship / N). Tổng (lý thuyết) = finalAmount.

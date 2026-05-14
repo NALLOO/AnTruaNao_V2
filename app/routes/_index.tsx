@@ -608,25 +608,56 @@ export default function Index() {
                     </div>
                     <div className="space-y-2">
                       {(() => {
-                        // Group items theo itemName
+                        type DishGroup = {
+                          itemName: string;
+                          userCounts: Map<
+                            string,
+                            { userName: string; count: number }
+                          >;
+                          lineTotal: number;
+                        };
+
                         const groupedItems = order.items.reduce(
                           (acc, item) => {
-                            const key = item.itemName;
+                            const key = `${item.itemName}\0${item.price}`;
                             if (!acc[key]) {
                               acc[key] = {
-                                itemName: key,
-                                users: [],
-                                unitPrice: item.finalPrice, // Giá của 1 món sau khi trừ giảm giá
+                                itemName: item.itemName,
+                                userCounts: new Map(),
+                                lineTotal: 0,
                               };
                             }
-                            acc[key].users.push(item.user.name);
+                            const g = acc[key];
+                            g.lineTotal += item.finalPrice;
+                            const uid = item.userId;
+                            const prev = g.userCounts.get(uid);
+                            if (prev) {
+                              prev.count += 1;
+                            } else {
+                              g.userCounts.set(uid, {
+                                userName: item.user.name,
+                                count: 1,
+                              });
+                            }
                             return acc;
                           },
-                          {} as Record<
-                            string,
-                            { itemName: string; users: string[]; unitPrice: number }
-                          >
+                          {} as Record<string, DishGroup>
                         );
+
+                        const formatOrderers = (
+                          userCounts: DishGroup["userCounts"]
+                        ) => {
+                          return Array.from(userCounts.values())
+                            .sort((a, b) =>
+                              a.userName.localeCompare(b.userName, "vi")
+                            )
+                            .map(({ userName, count }) =>
+                              count > 1
+                                ? `${userName} (x${count})`
+                                : userName
+                            )
+                            .join(", ");
+                        };
 
                         return Object.values(groupedItems).map((group, index) => (
                           <div
@@ -634,10 +665,11 @@ export default function Index() {
                             className="flex justify-between items-center text-sm"
                           >
                             <span className="text-gray-700">
-                              {group.itemName} ({group.users.join(", ")})
+                              {group.itemName} (
+                              {formatOrderers(group.userCounts)})
                             </span>
                             <span className="font-medium text-gray-900">
-                              {formatCurrency(group.unitPrice)}
+                              {formatCurrency(group.lineTotal)}
                             </span>
                           </div>
                         ));

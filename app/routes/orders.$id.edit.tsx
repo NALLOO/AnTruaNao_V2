@@ -1,6 +1,6 @@
 import type { Route } from "./+types/orders.$id.edit";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { db } from "~/lib/db.server";
 import { requireAdminId } from "~/lib/session.server";
 import {
@@ -9,6 +9,7 @@ import {
   calculatePaymentRatio,
   calculatePortionDiscountShare,
   calculateShippingPerPortion,
+  parseOrderItemsFromFormData,
 } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -50,6 +51,44 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     },
   });
 
+  // Gom dòng DB theo (tên món + giá đơn vị), gộp số lượng theo từng userId
+  type GroupAcc = {
+    itemName: string;
+    price: number;
+    portions: { userId: string }[];
+  };
+  const groupedItems = order.items.reduce((acc, item) => {
+    const key = `${item.itemName}\0${item.price}`;
+    if (!acc[key]) {
+      acc[key] = {
+        itemName: item.itemName,
+        price: item.price,
+        portions: [],
+      };
+    }
+    acc[key].portions.push({ userId: item.userId });
+    return acc;
+  }, {} as Record<string, GroupAcc>);
+
+  const initialItems = Object.values(groupedItems).map((group) => {
+    const qtyByUser = new Map<string, number>();
+    for (const p of group.portions) {
+      qtyByUser.set(p.userId, (qtyByUser.get(p.userId) ?? 0) + 1);
+    }
+    const lines = Array.from(qtyByUser.entries())
+      .sort(([a], [b]) => {
+        const na = users.find((u) => u.id === a)?.name ?? "";
+        const nb = users.find((u) => u.id === b)?.name ?? "";
+        return na.localeCompare(nb, "vi");
+      })
+      .map(([userId, quantity]) => ({ userId, quantity }));
+    return {
+      lines: lines.length > 0 ? lines : [{ userId: "", quantity: 1 }],
+      itemName: group.itemName,
+      price: group.price,
+    };
+  });
+
   // Lấy các tuần chưa quyết toán, nhưng luôn bao gồm tuần hiện tại của đơn hàng (nếu có)
   const weeks = await db.week.findMany({
     where: {
@@ -62,30 +101,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       startDate: "desc",
     },
   });
-
-  // Transform order.items thành format OrderItem[] (group theo itemName)
-  const groupedItems = order.items.reduce(
-    (acc, item) => {
-      const key = item.itemName;
-      if (!acc[key]) {
-        acc[key] = {
-          itemName: key,
-          price: item.price,
-          userIds: [],
-          userNames: [],
-        };
-      }
-      acc[key].userIds.push(item.userId);
-      acc[key].userNames.push(item.user.name);
-      return acc;
-    },
-    {} as Record<
-      string,
-      { itemName: string; price: number; userIds: string[]; userNames: string[] }
-    >
-  );
-
-  const initialItems = Object.values(groupedItems);
 
   return { order, users, weeks, initialItems };
 }
@@ -125,66 +140,11 @@ export async function action({ request, params }: Route.ActionArgs) {
     );
   }
 
-  // Lấy danh sách items từ form
-  const itemsData: Array<{
-    userId: string;
-    userName: string;
-    itemName: string;
-    price: number;
-  }> = [];
-
-  let index = 0;
-  while (formData.get(`items[${index}].itemName`)) {
-    const itemName = formData.get(`items[${index}].itemName`) as string;
-    const price = parseFloat(formData.get(`items[${index}].price`) as string);
-
-    // Lấy danh sách userIds cho món này
-    const userIds: string[] = [];
-    let userIndex = 0;
-    while (formData.get(`items[${index}].userIds[${userIndex}]`)) {
-      const userId = formData.get(`items[${index}].userIds[${userIndex}]`) as string;
-      if (userId) {
-        userIds.push(userId);
-      }
-      userIndex++;
-    }
-
-    // Lấy danh sách userNames tương ứng
-    const userNames: string[] = [];
-    userIndex = 0;
-    while (formData.get(`items[${index}].userNames[${userIndex}]`)) {
-      const userName = formData.get(`items[${index}].userNames[${userIndex}]`) as string;
-      if (userName) {
-        userNames.push(userName);
-      }
-      userIndex++;
-    }
-
-    if (itemName && itemName.trim()) {
-      if (!Number.isFinite(price)) {
-        return Response.json(
-          { error: `Món "${itemName}" có giá không hợp lệ` },
-          { status: 400 }
-        );
-      }
-      if (userIds.length === 0) {
-        return Response.json(
-          { error: `Món "${itemName}" chưa có người đặt. Vui lòng chọn ít nhất một người đặt.` },
-          { status: 400 }
-        );
-      }
-
-      userIds.forEach((userId, idx) => {
-        itemsData.push({
-          userId,
-          userName: userNames[idx] || "",
-          itemName: itemName.trim(),
-          price,
-        });
-      });
-    }
-    index++;
+  const parsedItems = parseOrderItemsFromFormData(formData);
+  if (!parsedItems.ok) {
+    return Response.json({ error: parsedItems.error }, { status: 400 });
   }
+  const itemsData = parsedItems.portions;
 
   // Validation
   if (!description || !description.trim()) {
@@ -294,11 +254,27 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 }
 
-interface OrderItem {
-  userIds: string[];
-  userNames: string[];
+interface DishOrderLine {
+  userId: string;
+  quantity: number;
+}
+
+interface OrderItemRow {
+  lines: DishOrderLine[];
   itemName: string;
   price: number;
+}
+
+function dishSubtotal(item: OrderItemRow): number {
+  const unit = item.price || 0;
+  return item.lines.reduce((sum, line) => {
+    if (!line.userId) return sum;
+    const q =
+      Number.isFinite(line.quantity) && line.quantity >= 1
+        ? Math.floor(line.quantity)
+        : 1;
+    return sum + unit * q;
+  }, 0);
 }
 
 export default function EditOrder() {
@@ -307,7 +283,7 @@ export default function EditOrder() {
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
-  const [items, setItems] = useState<OrderItem[]>(initialItems);
+  const [items, setItems] = useState<OrderItemRow[]>(initialItems);
   const [finalAmountStr, setFinalAmountStr] = useState(
     String(order.finalAmount)
   );
@@ -316,9 +292,6 @@ export default function EditOrder() {
   );
   const [selectedWeekId, setSelectedWeekId] = useState<string>(order.weekId);
   const [description, setDescription] = useState<string>(order.description || "");
-  const [openDropdowns, setOpenDropdowns] = useState<Set<number>>(new Set());
-  const [filterTexts, setFilterTexts] = useState<Map<number, string>>(new Map());
-  const dropdownRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
   // Update state khi initialItems thay đổi (sau khi load)
   useEffect(() => {
@@ -329,34 +302,11 @@ export default function EditOrder() {
     setDescription(order.description || "");
   }, [initialItems, order]);
 
-  // Đóng dropdown khi click ra ngoài
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as Node;
-      let clickedInside = false;
-
-      openDropdowns.forEach((index) => {
-        const dropdown = dropdownRefs.current.get(index);
-        if (dropdown && dropdown.contains(target)) {
-          clickedInside = true;
-        }
-      });
-
-      if (!clickedInside && openDropdowns.size > 0) {
-        setOpenDropdowns(new Set());
-        // Reset all filters when closing dropdowns
-        setFilterTexts(new Map());
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [openDropdowns]);
-
   const handleAddItem = () => {
-    setItems([...items, { userIds: [], userNames: [], itemName: "", price: 0 }]);
+    setItems([
+      ...items,
+      { lines: [{ userId: "", quantity: 1 }], itemName: "", price: 0 },
+    ]);
   };
 
   const handleRemoveItem = (index: number) => {
@@ -365,13 +315,49 @@ export default function EditOrder() {
 
   const handleItemChange = (
     index: number,
-    field: keyof OrderItem,
+    field: keyof Pick<OrderItemRow, "itemName" | "price">,
     value: string | number
   ) => {
     setItems((prevItems) => {
       const newItems = [...prevItems];
       newItems[index] = { ...newItems[index], [field]: value };
       return newItems;
+    });
+  };
+
+  const handleAddDishLine = (itemIndex: number) => {
+    setItems((prev) => {
+      const next = [...prev];
+      next[itemIndex] = {
+        ...next[itemIndex],
+        lines: [...next[itemIndex].lines, { userId: "", quantity: 1 }],
+      };
+      return next;
+    });
+  };
+
+  const handleRemoveDishLine = (itemIndex: number, lineIndex: number) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const lines = [...next[itemIndex].lines];
+      if (lines.length <= 1) return prev;
+      lines.splice(lineIndex, 1);
+      next[itemIndex] = { ...next[itemIndex], lines };
+      return next;
+    });
+  };
+
+  const handleDishLineChange = (
+    itemIndex: number,
+    lineIndex: number,
+    patch: Partial<DishOrderLine>
+  ) => {
+    setItems((prev) => {
+      const next = [...prev];
+      const lines = [...next[itemIndex].lines];
+      lines[lineIndex] = { ...lines[lineIndex], ...patch };
+      next[itemIndex] = { ...next[itemIndex], lines };
+      return next;
     });
   };
 
@@ -454,16 +440,12 @@ export default function EditOrder() {
                 Tổng giá các món (VND)
               </label>
               <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700">
-                {(() => {
-                  return items
-                    .reduce((sum, item) => {
-                      return sum + (item.price || 0) * (item.userIds.length || 0);
-                    }, 0)
-                    .toLocaleString("vi-VN");
-                })()}
+                {items
+                  .reduce((sum, item) => sum + dishSubtotal(item), 0)
+                  .toLocaleString("vi-VN")}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                Giá món × số người đặt; giá có thể âm (ghi nợ)
+                Giá đơn vị × tổng số suất (cộng số lượng theo từng người); giá có thể âm (ghi nợ)
               </p>
             </div>
             <div>
@@ -494,9 +476,10 @@ export default function EditOrder() {
               </label>
               <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-gray-50 text-gray-700">
                 {(() => {
-                  const totalItemsPrice = items.reduce((sum, item) => {
-                    return sum + (item.price || 0) * (item.userIds.length || 0);
-                  }, 0);
+                  const totalItemsPrice = items.reduce(
+                    (sum, item) => sum + dishSubtotal(item),
+                    0
+                  );
                   const sf = parseFloat(shippingFeeStr);
                   const shippingFee = Number.isFinite(sf) ? Math.max(0, sf) : 0;
                   return (totalItemsPrice + shippingFee).toLocaleString("vi-VN");
@@ -532,9 +515,10 @@ export default function EditOrder() {
               </label>
               <div className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-green-50 text-green-700 font-semibold">
                 {(() => {
-                  const totalItemsPrice = items.reduce((sum, item) => {
-                    return sum + (item.price || 0) * (item.userIds.length || 0);
-                  }, 0);
+                  const totalItemsPrice = items.reduce(
+                    (sum, item) => sum + dishSubtotal(item),
+                    0
+                  );
                   const sf = parseFloat(shippingFeeStr);
                   const shippingFee = Number.isFinite(sf) ? Math.max(0, sf) : 0;
                   const grossTotal = totalItemsPrice + shippingFee;
@@ -562,212 +546,81 @@ export default function EditOrder() {
                 key={index}
                 className="border border-gray-200 rounded-md p-4"
               >
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Người đặt (có thể chọn nhiều)
-                    </label>
-                    <div className="relative">
-                      {/* Selected users as tags */}
-                      {item.userIds.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mb-2 p-2 border border-gray-300 rounded-md bg-gray-50 min-h-[42px]">
-                          {item.userIds.map((userId) => {
-                            const user = users.find((u) => u.id === userId);
-                            if (!user) return null;
-                            return (
-                              <span
-                                key={userId}
-                                className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800"
-                              >
-                                {user.name}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const newUserIds = item.userIds.filter((id) => id !== userId);
-                                    const newUserNames = users
-                                      .filter((u) => newUserIds.includes(u.id))
-                                      .map((u) => u.name);
-                                    setItems((prevItems) => {
-                                      const newItems = [...prevItems];
-                                      newItems[index] = {
-                                        ...newItems[index],
-                                        userIds: newUserIds,
-                                        userNames: newUserNames,
-                                      };
-                                      return newItems;
-                                    });
-                                  }}
-                                  className="ml-2 text-blue-600 hover:text-blue-800"
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Custom dropdown với checkbox */}
-                      <div
-                        className="relative"
-                        ref={(el) => {
-                          if (el) {
-                            dropdownRefs.current.set(index, el);
-                          } else {
-                            dropdownRefs.current.delete(index);
-                          }
-                        }}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 relative md:items-start">
+                  <div className="md:col-span-1 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="block text-sm font-medium text-gray-700">
+                        Người đặt và số lượng
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleAddDishLine(index)}
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-lg leading-none"
+                        title="Thêm người đặt cho món này"
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenDropdowns((prev) => {
-                              const newSet = new Set(prev);
-                              if (newSet.has(index)) {
-                                newSet.delete(index);
-                                // Reset filter when closing
-                                setFilterTexts((prevFilters) => {
-                                  const newFilters = new Map(prevFilters);
-                                  newFilters.delete(index);
-                                  return newFilters;
-                                });
-                              } else {
-                                newSet.add(index);
-                              }
-                              return newSet;
-                            });
-                          }}
-                          className="w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500 text-left flex items-center justify-between"
-                        >
-                          <span className="text-gray-500">
-                            {item.userIds.length === 0
-                              ? "-- Chọn thành viên --"
-                              : `Đã chọn ${item.userIds.length} người`}
-                          </span>
-                          <svg
-                            className={`w-5 h-5 text-gray-400 transition-transform ${openDropdowns.has(index) ? "rotate-180" : ""
-                              }`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 9l-7 7-7-7"
-                            />
-                          </svg>
-                        </button>
-                        {openDropdowns.has(index) && (
-                          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-hidden flex flex-col">
-                            {/* Filter input */}
-                            <div className="p-2 border-b border-gray-200">
-                              <input
-                                type="text"
-                                placeholder="Tìm kiếm thành viên..."
-                                value={filterTexts.get(index) || ""}
-                                onChange={(e) => {
-                                  setFilterTexts((prev) => {
-                                    const newMap = new Map(prev);
-                                    newMap.set(index, e.target.value);
-                                    return newMap;
-                                  });
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="w-full px-3 py-2 text-sm text-gray-900 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                                autoFocus
-                              />
-                            </div>
-                            {/* Filtered users list */}
-                            <div className="overflow-auto max-h-48">
-                              {users
-                                .filter((user) => {
-                                  const filterText = filterTexts.get(index) || "";
-                                  if (!filterText) return true;
-                                  return user.name.toLowerCase().includes(filterText.toLowerCase());
-                                })
-                                .map((user) => {
-                                  const isSelected = item.userIds.includes(user.id);
-                                  return (
-                                    <label
-                                      key={user.id}
-                                      className="flex items-center px-4 py-2 hover:bg-gray-50 cursor-pointer"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={isSelected}
-                                        onChange={() => {
-                                          if (isSelected) {
-                                            // Remove user
-                                            const newUserIds = item.userIds.filter((id) => id !== user.id);
-                                            const newUserNames = users
-                                              .filter((u) => newUserIds.includes(u.id))
-                                              .map((u) => u.name);
-                                            setItems((prevItems) => {
-                                              const newItems = [...prevItems];
-                                              newItems[index] = {
-                                                ...newItems[index],
-                                                userIds: newUserIds,
-                                                userNames: newUserNames,
-                                              };
-                                              return newItems;
-                                            });
-                                          } else {
-                                            // Add user
-                                            const newUserIds = [...item.userIds, user.id];
-                                            const newUserNames = [...item.userNames, user.name];
-                                            setItems((prevItems) => {
-                                              const newItems = [...prevItems];
-                                              newItems[index] = {
-                                                ...newItems[index],
-                                                userIds: newUserIds,
-                                                userNames: newUserNames,
-                                              };
-                                              return newItems;
-                                            });
-                                          }
-                                        }}
-                                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 focus:ring-2 accent-blue-600"
-                                      />
-                                      <span className="ml-2 text-sm text-gray-700">{user.name}</span>
-                                    </label>
-                                  );
-                                })}
-                              {users.filter((user) => {
-                                const filterText = filterTexts.get(index) || "";
-                                if (!filterText) return true;
-                                return user.name.toLowerCase().includes(filterText.toLowerCase());
-                              }).length === 0 && (
-                                  <div className="px-4 py-2 text-sm text-gray-500 text-center">
-                                    Không tìm thấy thành viên
-                                  </div>
-                                )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                        +
+                      </button>
                     </div>
-                    {/* Hidden inputs for form submission */}
-                    {item.userIds.map((userId, userIndex) => {
-                      const user = users.find((u) => u.id === userId);
-                      return (
-                        <input
-                          key={userIndex}
-                          type="hidden"
-                          name={`items[${index}].userIds[${userIndex}]`}
-                          value={userId}
-                        />
-                      );
-                    })}
-                    {item.userNames.map((userName, userIndex) => (
-                      <input
-                        key={userIndex}
-                        type="hidden"
-                        name={`items[${index}].userNames[${userIndex}]`}
-                        value={userName}
-                      />
-                    ))}
+                    <div className="space-y-2">
+                      {item.lines.map((line, lineIndex) => (
+                        <div
+                          key={lineIndex}
+                          className="flex flex-wrap items-center gap-2"
+                        >
+                          <select
+                            name={`items[${index}].lines[${lineIndex}].userId`}
+                            value={line.userId}
+                            onChange={(e) =>
+                              handleDishLineChange(index, lineIndex, {
+                                userId: e.target.value,
+                              })
+                            }
+                            className="flex-1 min-w-[140px] px-3 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 bg-white focus:ring-blue-500 focus:border-blue-500"
+                          >
+                            <option value="">-- Chọn thành viên --</option>
+                            {users.map((user) => (
+                              <option key={user.id} value={user.id}>
+                                {user.name}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <label className="sr-only" htmlFor={`qty-${index}-${lineIndex}`}>
+                              Số lượng
+                            </label>
+                            <input
+                              id={`qty-${index}-${lineIndex}`}
+                              type="number"
+                              name={`items[${index}].lines[${lineIndex}].quantity`}
+                              min={1}
+                              step={1}
+                              value={
+                                Number.isFinite(line.quantity) && line.quantity >= 1
+                                  ? line.quantity
+                                  : 1
+                              }
+                              onChange={(e) => {
+                                const n = parseInt(e.target.value, 10);
+                                handleDishLineChange(index, lineIndex, {
+                                  quantity:
+                                    Number.isFinite(n) && n >= 1 ? n : 1,
+                                });
+                              }}
+                              className="w-20 px-2 py-2 border border-gray-300 rounded-md shadow-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          {item.lines.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDishLine(index, lineIndex)}
+                              className="text-sm text-red-600 hover:text-red-800 px-1"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
