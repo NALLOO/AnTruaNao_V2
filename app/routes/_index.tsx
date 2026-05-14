@@ -615,6 +615,7 @@ export default function Index() {
                             { userName: string; count: number }
                           >;
                           lineTotal: number;
+                          portionCount: number;
                         };
 
                         const groupedItems = order.items.reduce(
@@ -625,10 +626,12 @@ export default function Index() {
                                 itemName: item.itemName,
                                 userCounts: new Map(),
                                 lineTotal: 0,
+                                portionCount: 0,
                               };
                             }
                             const g = acc[key];
                             g.lineTotal += item.finalPrice;
+                            g.portionCount += 1;
                             const uid = item.userId;
                             const prev = g.userCounts.get(uid);
                             if (prev) {
@@ -669,7 +672,14 @@ export default function Index() {
                               {formatOrderers(group.userCounts)})
                             </span>
                             <span className="font-medium text-gray-900">
-                              {formatCurrency(group.lineTotal)}
+                              {formatCurrency(
+                                group.portionCount > 0
+                                  ? Math.round(
+                                      (group.lineTotal / group.portionCount) *
+                                        100
+                                    ) / 100
+                                  : 0
+                              )}
                             </span>
                           </div>
                         ));
