@@ -247,6 +247,53 @@ export async function action({ request }: Route.ActionArgs) {
     }
   }
 
+  if (intent === "unfinalize") {
+    const weekId = formData.get("weekId") as string;
+
+    if (!weekId) {
+      return Response.json(
+        { error: "Không tìm thấy tuần cần hủy quyết toán" },
+        { status: 400 }
+      );
+    }
+
+    const week = await db.week.findUnique({
+      where: { id: weekId },
+    });
+
+    if (!week) {
+      return Response.json(
+        { error: "Không tìm thấy tuần" },
+        { status: 404 }
+      );
+    }
+
+    if (!week.isFinalized) {
+      return Response.json(
+        { error: "Tuần này chưa được quyết toán" },
+        { status: 400 }
+      );
+    }
+
+    try {
+      await db.week.update({
+        where: { id: weekId },
+        data: {
+          isFinalized: false,
+          finalizedAt: null,
+        },
+      });
+
+      return Response.redirect(new URL("/weeks", request.url).toString(), 302);
+    } catch (error) {
+      console.error("Error unfinalizing week:", error);
+      return Response.json(
+        { error: "Đã xảy ra lỗi khi hủy quyết toán tuần" },
+        { status: 500 }
+      );
+    }
+  }
+
   if (intent === "delete") {
     const weekId = formData.get("weekId") as string;
 
@@ -624,7 +671,7 @@ export default function Weeks() {
                         >
                           Xem chi tiết
                         </a>
-                        {!week.isFinalized && (
+                        {!week.isFinalized ? (
                           <Form method="post" className="inline">
                             <input type="hidden" name="intent" value="finalize" />
                             <input type="hidden" name="weekId" value={week.id} />
@@ -643,6 +690,27 @@ export default function Weeks() {
                               }}
                             >
                               Quyết toán tuần
+                            </button>
+                          </Form>
+                        ) : (
+                          <Form method="post" className="inline">
+                            <input type="hidden" name="intent" value="unfinalize" />
+                            <input type="hidden" name="weekId" value={week.id} />
+                            <button
+                              type="submit"
+                              disabled={isSubmitting}
+                              className="text-amber-600 cursor-pointer hover:text-amber-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                              onClick={(e) => {
+                                if (
+                                  !confirm(
+                                    "Bạn có chắc chắn muốn hủy quyết toán tuần này? Tuần sẽ quay lại trạng thái chưa quyết toán (có thể chỉnh sửa đơn, QR thanh toán trên dashboard sẽ ẩn)."
+                                  )
+                                ) {
+                                  e.preventDefault();
+                                }
+                              }}
+                            >
+                              Hủy quyết toán
                             </button>
                           </Form>
                         )}
