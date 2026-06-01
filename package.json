@@ -9,6 +9,8 @@
     "typecheck": "react-router typegen && tsc",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:upgrade:multi-admin": "prisma db execute --file prisma/scripts/multi-admin-upgrade.sql",
     "db:studio": "prisma studio",
     "db:push": "prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
