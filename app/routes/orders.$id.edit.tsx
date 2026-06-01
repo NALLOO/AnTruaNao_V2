@@ -2,7 +2,7 @@ import type { Route } from "./+types/orders.$id.edit";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState, useEffect } from "react";
 import { db } from "~/lib/db.server";
-import { requireAdminId } from "~/lib/session.server";
+import { weekWhereForAdmin } from "~/lib/admin.shared";
 import {
   allocateFinalAmountToPortions,
   calculateDiscount,
@@ -20,8 +20,8 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export async function loader({ request, params }: Route.LoaderArgs) {
-  // Yêu cầu đăng nhập
-  await requireAdminId(request);
+  const { requireAdminId } = await import("~/lib/session.server");
+  const adminId = await requireAdminId(request);
 
   const orderId = params.id;
   if (!orderId) {
@@ -43,6 +43,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   if (!order) {
     throw new Response("Order not found", { status: 404 });
+  }
+
+  if (order.week.adminId !== adminId) {
+    throw new Response("Bạn không có quyền chỉnh sửa đơn hàng này", { status: 403 });
   }
 
   const users = await db.user.findMany({
@@ -92,9 +96,10 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   // Lấy các tuần chưa quyết toán, nhưng luôn bao gồm tuần hiện tại của đơn hàng (nếu có)
   const weeks = await db.week.findMany({
     where: {
+      adminId,
       OR: [
-        { isFinalized: false }, // Tuần chưa quyết toán
-        { id: order.weekId }, // Luôn bao gồm tuần hiện tại của đơn hàng
+        { isFinalized: false },
+        { id: order.weekId },
       ],
     },
     orderBy: {
@@ -106,21 +111,18 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 }
 
 export async function action({ request, params }: Route.ActionArgs) {
-  await requireAdminId(request);
+  const { requireAdminId } = await import("~/lib/session.server");
+  const { requireOrderAccess, requireWeekAccess } = await import(
+    "~/lib/admin.server"
+  );
+  const adminId = await requireAdminId(request);
 
   const orderId = params.id;
   if (!orderId) {
     return Response.json({ error: "Order ID is required" }, { status: 400 });
   }
 
-  // Kiểm tra order có tồn tại không
-  const existingOrder = await db.order.findUnique({
-    where: { id: orderId },
-  });
-
-  if (!existingOrder) {
-    return Response.json({ error: "Order not found" }, { status: 404 });
-  }
+  await requireOrderAccess(adminId, orderId);
 
   const formData = await request.formData();
   const description = formData.get("description") as string;
@@ -139,6 +141,8 @@ export async function action({ request, params }: Route.ActionArgs) {
       { status: 400 }
     );
   }
+
+  await requireWeekAccess(adminId, weekId);
 
   const parsedItems = parseOrderItemsFromFormData(formData);
   if (!parsedItems.ok) {

@@ -14,7 +14,11 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Nếu đã đăng nhập, redirect về dashboard
   const adminId = await getAdminId(request);
   if (adminId) {
-    return Response.redirect(new URL("/", request.url).toString(), 302);
+    const admin = await db.admin.findUnique({ where: { id: adminId } });
+    const redirectTo = admin
+      ? `/?admin=${encodeURIComponent(admin.slug)}`
+      : "/";
+    return Response.redirect(new URL(redirectTo, request.url).toString(), 302);
   }
   return {};
 }
@@ -46,8 +50,8 @@ export async function action({ request }: Route.ActionArgs) {
       );
     }
 
-    // Tạo session và redirect
-    return createAdminSession(admin.id, "/", request);
+    const redirectTo = `/?admin=${encodeURIComponent(admin.slug)}`;
+    return createAdminSession(admin.id, redirectTo, request);
   } catch (error) {
     console.error("Error during login:", error);
     return Response.json(

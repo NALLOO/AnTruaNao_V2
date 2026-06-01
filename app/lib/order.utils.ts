@@ -1,3 +1,5 @@
+import type { AdminBankConfig } from "~/lib/admin.shared";
+
 /**
  * Chênh lệch giữa tổng niêm yết và tiền thực trả:
  * tham số 1 − tham số 2 (ví dụ: tổng món hoặc tổng món+ship, và tổng tiền phải trả)
@@ -227,32 +229,42 @@ export function formatDate(date: Date): string {
   });
 }
 
+function buildVietQrImageUrl(
+  bank: AdminBankConfig,
+  amount: number,
+  addInfo: string
+): string {
+  const amountValue = Math.round(amount);
+  const encodedAddInfo = encodeURIComponent(addInfo);
+  const encodedAccountName = encodeURIComponent(bank.accountHolderName);
+  const imageId = `${bank.bankCode}-${bank.accountNumber}-compact2.jpg`;
+  return `https://img.vietqr.io/image/${imageId}?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=${encodedAccountName}`;
+}
+
 /**
  * Tạo URL QR code chuyển tiền
  * Nội dung chuyển khoản: "tên người tien com ngày bắt đầu tuần"
- * Ví dụ: "nghiapd tien com 12/01/2026"
  */
 export function generateQRCodeUrl(
   amount: number,
   userName: string,
-  startDate: Date
+  startDate: Date,
+  bank: AdminBankConfig
 ): string {
-  const amountValue = Math.round(amount);
   const formattedDate = formatDate(startDate);
-  // Nội dung: "tên người tien com ngày bắt đầu tuần"
-  // Ví dụ: "nghiapd tien com 12/01/2026"
   const addInfo = `${userName} tien com ${formattedDate}`;
-  const encodedAddInfo = encodeURIComponent(addInfo);
-  return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=PHAM%20DINH%20NGHIA`;
+  return buildVietQrImageUrl(bank, amount, addInfo);
 }
 
 /**
  * QR một lần cho tổng tiền cơm nhiều tuần (nội dung: "tên người tien com tong cong")
  */
-export function generateTotalQRCodeUrl(amount: number, userName: string): string {
-  const amountValue = Math.round(amount);
+export function generateTotalQRCodeUrl(
+  amount: number,
+  userName: string,
+  bank: AdminBankConfig
+): string {
   const addInfo = `${userName} tien com tong cong`;
-  const encodedAddInfo = encodeURIComponent(addInfo);
-  return `https://img.vietqr.io/image/vpbank-2746520062001-compact2.jpg?amount=${amountValue}&addInfo=${encodedAddInfo}&accountName=PHAM%20DINH%20NGHIA`;
+  return buildVietQrImageUrl(bank, amount, addInfo);
 }
 

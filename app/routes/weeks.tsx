@@ -2,7 +2,7 @@ import type { Route } from "./+types/weeks";
 import { Form, useActionData, useLoaderData, useNavigation, useNavigate } from "react-router";
 import { useState, useEffect, useRef } from "react";
 import { db } from "~/lib/db.server";
-import { requireAdminId } from "~/lib/session.server";
+import { boardUrlForAdmin, weekWhereForAdmin } from "~/lib/admin.shared";
 import { calculateUserTotals, applyShippingToUserTotals } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -13,16 +13,21 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Yêu cầu đăng nhập
-  await requireAdminId(request);
+  const { requireAdminId } = await import("~/lib/session.server");
+  const { getAdminById } = await import("~/lib/admin.server");
+  const adminId = await requireAdminId(request);
+  const admin = await getAdminById(adminId);
+  if (!admin) {
+    throw new Response("Admin not found", { status: 404 });
+  }
 
   const url = new URL(request.url);
   const page = parseInt(url.searchParams.get("page") || "1", 10);
   const showAll = url.searchParams.get("showAll") === "true";
   const pageSize = 10; // Số tuần mỗi trang
 
-  // Lấy tất cả tuần để tính trạng thái thanh toán
   const allWeeks = await db.week.findMany({
+    where: weekWhereForAdmin(adminId),
     include: {
       _count: {
         select: {
@@ -106,6 +111,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   return {
     weeks: paginatedWeeks,
+    adminSlug: admin.slug,
     showAll,
     pagination: {
       currentPage: page,
@@ -119,6 +125,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const { requireAdminId } = await import("~/lib/session.server");
+  const { requireWeekAccess } = await import("~/lib/admin.server");
+  const adminId = await requireAdminId(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
@@ -165,16 +174,9 @@ export async function action({ request }: Route.ActionArgs) {
     // Kiểm tra xem tuần này đã tồn tại chưa
     const existingWeek = await db.week.findFirst({
       where: {
-        OR: [
-          {
-            startDate: {
-              lte: endDate,
-            },
-            endDate: {
-              gte: startDate,
-            },
-          },
-        ],
+        adminId,
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
       },
     });
 
@@ -190,6 +192,7 @@ export async function action({ request }: Route.ActionArgs) {
     try {
       await db.week.create({
         data: {
+          adminId,
           startDate,
           endDate,
           name: name?.trim() || null,
@@ -216,19 +219,8 @@ export async function action({ request }: Route.ActionArgs) {
       );
     }
 
-    // Kiểm tra xem tuần có tồn tại không
-    const week = await db.week.findUnique({
-      where: { id: weekId },
-    });
-
-    if (!week) {
-      return Response.json(
-        { error: "Không tìm thấy tuần" },
-        { status: 404 }
-      );
-    }
-
     try {
+      await requireWeekAccess(adminId, weekId);
       await db.week.update({
         where: { id: weekId },
         data: {
@@ -257,25 +249,23 @@ export async function action({ request }: Route.ActionArgs) {
       );
     }
 
-    const week = await db.week.findUnique({
-      where: { id: weekId },
-    });
-
-    if (!week) {
-      return Response.json(
-        { error: "Không tìm thấy tuần" },
-        { status: 404 }
-      );
-    }
-
-    if (!week.isFinalized) {
-      return Response.json(
-        { error: "Tuần này chưa được quyết toán" },
-        { status: 400 }
-      );
-    }
-
     try {
+      const week = await db.week.findUnique({ where: { id: weekId } });
+      if (!week) {
+        return Response.json({ error: "Không tìm thấy tuần" }, { status: 404 });
+      }
+      if (week.adminId !== adminId) {
+        return Response.json(
+          { error: "Bạn không có quyền thao tác tuần này" },
+          { status: 403 }
+        );
+      }
+      if (!week.isFinalized) {
+        return Response.json(
+          { error: "Tuần này chưa được quyết toán" },
+          { status: 400 }
+        );
+      }
       await db.week.update({
         where: { id: weekId },
         data: {
@@ -304,7 +294,6 @@ export async function action({ request }: Route.ActionArgs) {
       );
     }
 
-    // Kiểm tra xem tuần có đơn hàng không
     const week = await db.week.findUnique({
       where: { id: weekId },
       include: {
@@ -320,6 +309,13 @@ export async function action({ request }: Route.ActionArgs) {
       return Response.json(
         { error: "Không tìm thấy tuần" },
         { status: 404 }
+      );
+    }
+
+    if (week.adminId !== adminId) {
+      return Response.json(
+        { error: "Bạn không có quyền thao tác tuần này" },
+        { status: 403 }
       );
     }
 
@@ -351,7 +347,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Weeks() {
-  const { weeks, pagination, showAll } = useLoaderData<typeof loader>();
+  const { weeks, pagination, showAll, adminSlug } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const navigate = useNavigate();
@@ -666,7 +662,7 @@ export default function Weeks() {
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-3">
                         <a
-                          href={`/?weekId=${week.id}`}
+                          href={boardUrlForAdmin(adminSlug, week.id)}
                           className="text-blue-600 hover:text-blue-900"
                         >
                           Xem chi tiết

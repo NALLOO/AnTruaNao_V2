@@ -9,7 +9,7 @@ import {
 } from "react-router";
 import type { Route } from "./+types/root";
 import appStyles from "./app.css?url";
-import { getAdminId } from "~/lib/session.server";
+import { boardUrlForAdmin } from "~/lib/admin.shared";
 
 export const links: Route.LinksFunction = () => [
   { rel: "stylesheet", href: appStyles },
@@ -27,12 +27,21 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export async function loader({ request }: Route.LoaderArgs) {
+  const { getAdminId } = await import("~/lib/session.server");
+  const { getAdminById } = await import("~/lib/admin.server");
   const adminId = await getAdminId(request);
-  return { isAuthenticated: !!adminId };
+  let dashboardHref = "/";
+  if (adminId) {
+    const admin = await getAdminById(adminId);
+    if (admin) {
+      dashboardHref = boardUrlForAdmin(admin.slug);
+    }
+  }
+  return { isAuthenticated: !!adminId, dashboardHref };
 }
 
 export default function App() {
-  const { isAuthenticated } = useLoaderData<typeof loader>();
+  const { isAuthenticated, dashboardHref } = useLoaderData<typeof loader>();
 
   return (
     <html lang="vi">
@@ -48,19 +57,25 @@ export default function App() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between h-16">
                 <div className="flex items-center">
-                  <a href="/" className="text-xl font-bold text-gray-900">
+                  <a href={dashboardHref} className="text-xl font-bold text-gray-900">
                     🍜 An Trua Nao
                   </a>
                 </div>
                 <div className="flex items-center space-x-4">
                   <a
-                    href="/"
+                    href={dashboardHref}
                     className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
                   >
                     Dashboard
                   </a>
                   {isAuthenticated ? (
                     <>
+                      <a
+                        href="/profile"
+                        className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                      >
+                        Hồ sơ
+                      </a>
                       <a
                         href="/weeks"
                         className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"

@@ -2,7 +2,7 @@ import type { Route } from "./+types/orders.new";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { useState } from "react";
 import { db } from "~/lib/db.server";
-import { requireAdminId } from "~/lib/session.server";
+import { weekWhereForAdmin } from "~/lib/admin.shared";
 import {
   allocateFinalAmountToPortions,
   calculateDiscount,
@@ -20,8 +20,8 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Yêu cầu đăng nhập
-  await requireAdminId(request);
+  const { requireAdminId } = await import("~/lib/session.server");
+  const adminId = await requireAdminId(request);
 
   const users = await db.user.findMany({
     orderBy: {
@@ -31,7 +31,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const weeks = await db.week.findMany({
     where: {
-      isFinalized: false, // Chỉ lấy các tuần chưa quyết toán
+      ...weekWhereForAdmin(adminId),
+      isFinalized: false,
     },
     orderBy: {
       startDate: "desc",
@@ -42,6 +43,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const { requireAdminId } = await import("~/lib/session.server");
+  const { requireWeekAccess } = await import("~/lib/admin.server");
+  const adminId = await requireAdminId(request);
   const formData = await request.formData();
   const description = formData.get("description") as string;
   const weekId = formData.get("weekId") as string;
@@ -52,13 +56,14 @@ export async function action({ request }: Route.ActionArgs) {
       ? 0
       : parseFloat(String(shippingFeeRaw));
 
-  // Validation: Phải chọn tuần
   if (!weekId) {
     return Response.json(
       { error: "Vui lòng chọn tuần cho đơn hàng" },
       { status: 400 }
     );
   }
+
+  await requireWeekAccess(adminId, weekId);
 
   const parsedItems = parseOrderItemsFromFormData(formData);
   if (!parsedItems.ok) {

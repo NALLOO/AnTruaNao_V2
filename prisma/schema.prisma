@@ -25,6 +25,7 @@ model User {
 
 model Week {
   id          String    @id @default(cuid())
+  adminId     String
   startDate   DateTime  // Ngày bắt đầu tuần (Thứ hai)
   endDate     DateTime  // Ngày kết thúc tuần (Thứ sáu)
   name        String?   // Tên tuần (tùy chọn, ví dụ: "Tuần 1 - Tháng 1")
@@ -32,10 +33,12 @@ model Week {
   finalizedAt DateTime? // Thời gian quyết toán tuần
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-  
+
+  admin       Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
   orders      Order[]
   payments    Payment[]
-  
+
+  @@index([adminId])
   @@map("weeks")
 }
 
@@ -91,12 +94,19 @@ model Payment {
 }
 
 model Admin {
-  id        String   @id @default(cuid())
-  userName  String   @unique
-  password  String   // Lưu password dạng plain text (đơn giản cho demo)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  id                String   @id @default(cuid())
+  userName          String   @unique
+  password          String   // Lưu password dạng plain text (đơn giản cho demo)
+  slug              String   @unique
+  displayName       String?
+  bankCode          String?
+  accountNumber     String?
+  accountHolderName String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  weeks             Week[]
+
   @@map("admins")
 }
 

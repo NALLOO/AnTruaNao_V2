@@ -2,7 +2,8 @@ import type { Route } from "./+types/_index";
 import { Form, useLoaderData, useNavigate } from "react-router";
 import { useState } from "react";
 import { db } from "~/lib/db.server";
-import { getAdminId } from "~/lib/session.server";
+import { AdminPublicPicker } from "~/components/AdminPublicPicker";
+import { weekWhereForAdmin } from "~/lib/admin.shared";
 import {
   calculateUserTotals,
   generateQRCodeUrl,
@@ -18,15 +19,43 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Kiểm tra đăng nhập (không bắt buộc cho dashboard)
-  const adminId = await getAdminId(request);
-  const isAuthenticated = !!adminId;
+  const { getAdminId } = await import("~/lib/session.server");
+  const { resolveBoardAdmin } = await import("~/lib/admin.server");
+  const sessionAdminId = await getAdminId(request);
+  const isAuthenticated = !!sessionAdminId;
+
+  const resolved = await resolveBoardAdmin(request, sessionAdminId);
+  if (!resolved.ok) {
+    const { listPublicAdmins } = await import("~/lib/admin.server");
+    const admins =
+      resolved.kind === "missing_slug" || resolved.kind === "invalid_slug"
+        ? await listPublicAdmins()
+        : [];
+    return {
+      boardState: resolved.kind,
+      admins,
+      userTotals: [],
+      totalOrdersAmount: 0,
+      orders: [],
+      weeks: [],
+      selectedWeek: null,
+      isAuthenticated,
+      admin: null,
+      adminSlug: null,
+      bankConfig: null,
+      boardTitle: null,
+    };
+  }
+
+  const { admin, bankConfig } = resolved;
+  const adminSlug = admin.slug;
+  const boardTitle = admin.displayName || admin.userName;
 
   const url = new URL(request.url);
   const weekId = url.searchParams.get("weekId");
 
-  // Lấy tất cả tuần
   const allWeeks = await db.week.findMany({
+    where: weekWhereForAdmin(admin.id),
     orderBy: {
       startDate: "desc",
     },
@@ -35,7 +64,6 @@ export async function loader({ request }: Route.LoaderArgs) {
   let weeks: typeof allWeeks;
 
   if (isAuthenticated) {
-    // Nếu đã đăng nhập: hiển thị tất cả các tuần
     weeks = allWeeks;
   } else {
     // Nếu chưa đăng nhập: chỉ hiển thị các tuần có người chưa thanh toán
@@ -99,12 +127,22 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Nếu không có tuần nào, trả về empty
   if (weeks.length === 0) {
     return {
+      boardState: "ok" as const,
+      admins: [],
       userTotals: [],
       totalOrdersAmount: 0,
       orders: [],
       weeks: [],
       selectedWeek: null,
       isAuthenticated,
+      adminSlug,
+      bankConfig,
+      boardTitle,
+      admin: {
+        id: admin.id,
+        slug: admin.slug,
+        displayName: admin.displayName,
+      },
     };
   }
 
@@ -178,17 +216,28 @@ export async function loader({ request }: Route.LoaderArgs) {
   }));
 
   return {
+    boardState: "ok" as const,
+    admins: [],
     userTotals: userTotalsWithPayment,
     totalOrdersAmount,
     orders,
     weeks,
     selectedWeek,
     isAuthenticated,
+    adminSlug,
+    bankConfig,
+    boardTitle,
+    admin: {
+      id: admin.id,
+      slug: admin.slug,
+      displayName: admin.displayName,
+    },
   };
 }
 
 export async function action({ request }: Route.ActionArgs) {
-  // Yêu cầu đăng nhập để cập nhật thanh toán
+  const { getAdminId } = await import("~/lib/session.server");
+  const { requireWeekAccess } = await import("~/lib/admin.server");
   const adminId = await getAdminId(request);
   if (!adminId) {
     return Response.json(
@@ -213,6 +262,7 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     try {
+      await requireWeekAccess(adminId, weekId);
       // Upsert payment status
       await db.payment.upsert({
         where: {
@@ -249,8 +299,20 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Index() {
-  const { userTotals, totalOrdersAmount, orders, weeks, selectedWeek, isAuthenticated } =
-    useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  const {
+    userTotals,
+    totalOrdersAmount,
+    orders,
+    weeks,
+    selectedWeek,
+    isAuthenticated,
+    boardState,
+    admins,
+    adminSlug,
+    bankConfig,
+    boardTitle,
+  } = loaderData;
   const navigate = useNavigate();
   const [qrPopup, setQrPopup] = useState<{ isOpen: boolean; qrUrl: string; userName: string; amount: number }>({
     isOpen: false,
@@ -258,6 +320,33 @@ export default function Index() {
     userName: "",
     amount: 0,
   });
+
+  if (boardState === "missing_slug") {
+    return (
+      <AdminPublicPicker
+        title="Chọn board"
+        description="Mỗi nhóm có board tổng hợp riêng. Chọn nhóm để xem tuần, đơn hàng và trạng thái thanh toán."
+        admins={admins}
+      />
+    );
+  }
+
+  if (boardState === "invalid_slug") {
+    return (
+      <div>
+        <div className="max-w-lg mx-auto px-4 pt-8 text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Không tìm thấy board</h1>
+          <p className="text-gray-600">Slug không hợp lệ. Chọn nhóm bên dưới.</p>
+        </div>
+        <AdminPublicPicker
+          title="Chọn board"
+          description=""
+          admins={admins}
+          showLoginLink={false}
+        />
+      </div>
+    );
+  }
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("vi-VN", {
@@ -273,6 +362,9 @@ export default function Index() {
 
   const handleWeekChange = (weekId: string) => {
     const url = new URL(window.location.href);
+    if (adminSlug) {
+      url.searchParams.set("admin", adminSlug);
+    }
     if (weekId) {
       url.searchParams.set("weekId", weekId);
     } else {
@@ -282,7 +374,8 @@ export default function Index() {
   };
 
   const handleOpenQR = (amount: number, userName: string, startDate: Date) => {
-    const qrUrl = generateQRCodeUrl(amount, userName, startDate);
+    if (!bankConfig) return;
+    const qrUrl = generateQRCodeUrl(amount, userName, startDate, bankConfig);
     setQrPopup({
       isOpen: true,
       qrUrl,
@@ -304,10 +397,16 @@ export default function Index() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <h1 className="text-3xl font-bold text-gray-900">
+            {boardTitle ?? "Dashboard"}
+          </h1>
           <div className="flex items-center gap-4">
             <a
-              href="/payment"
+              href={
+                adminSlug
+                  ? `/payment?admin=${encodeURIComponent(adminSlug)}`
+                  : "/payment"
+              }
               className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
             >
               Đóng họ
@@ -465,7 +564,7 @@ export default function Index() {
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center">
-                            {!user.paid && selectedWeek?.isFinalized ? (
+                            {!user.paid && selectedWeek?.isFinalized && bankConfig ? (
                               <button
                                 type="button"
                                 onClick={() => handleOpenQR(user.totalAmount, user.userName, selectedWeek.startDate)}
@@ -489,7 +588,11 @@ export default function Index() {
                               </button>
                             ) : (
                               <span className="text-sm text-gray-400">
-                                {selectedWeek?.isFinalized ? "—" : "Chưa quyết toán"}
+                                {!selectedWeek?.isFinalized
+                                  ? "Chưa quyết toán"
+                                  : !bankConfig
+                                    ? "Chưa cấu hình NH"
+                                    : "—"}
                               </span>
                             )}
                           </td>

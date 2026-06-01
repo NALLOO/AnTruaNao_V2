@@ -33,22 +33,25 @@
 cd antruanao_app
 ```
 
-2. Tạo file `.env` từ `.env.example`:
+2. Tạo file `.env` từ `.env.exammple`:
 ```bash
-cp .env.example .env
+cp .env.exammple .env
 ```
 
 3. Chạy với Docker Compose:
 ```bash
-docker-compose up -d
+docker compose up -d --build
 ```
 
-4. Chạy migration database:
+4. Migration + seed admin gốc:
 ```bash
-docker-compose exec app npm run db:migrate
+docker compose exec app npx prisma db push
+docker compose exec app npm run db:seed
 ```
 
-5. Truy cập ứng dụng tại: `http://localhost:3000`
+5. Truy cập: `http://localhost:4000/?admin=default` (đăng nhập `admin` / `admin123` nếu seed mặc định)
+
+Thêm admin thứ 2 (local/Docker): xem mục **Deploy production → Thêm admin mới**.
 
 ### Cách 2: Chạy local (không dùng Docker)
 
@@ -67,9 +70,10 @@ DATABASE_URL="postgresql://antruanao:antruanao123@localhost:5432/antruanao_db"
 docker-compose up -d postgres
 ```
 
-4. Chạy Prisma migration:
+4. Chạy Prisma migration và seed admin gốc:
 ```bash
 npm run db:migrate
+npm run db:seed
 ```
 
 5. Generate Prisma Client:
@@ -81,6 +85,8 @@ npm run db:generate
 ```bash
 npm run dev
 ```
+
+7. Mở board công khai: `http://localhost:5173/?admin=default` (hoặc cổng dev của bạn)
 
 ## 📁 Cấu trúc dự án
 
@@ -121,10 +127,44 @@ Hệ thống sẽ tự động:
 - Chia phần giảm giá theo tỷ lệ giá từng món
 - Tính giá cuối cùng cho từng món sau khi trừ phần giảm giá
 
+### Multi-admin
+
+- Mỗi admin có **slug** riêng: board `/?admin=<slug>`, đóng họ `/payment?admin=<slug>`.
+- Trang `/payment`: chọn board (hoặc **Tất cả nhóm**) + chọn người. Nút xanh **Đóng họ** chỉ trên dashboard (main), không trên từng card ở màn chọn board ban đầu.
+- Cấu hình hồ sơ và ngân hàng (VietQR, tùy chọn) tại **`/profile`** sau khi đăng nhập.
+- Tuần/đơn chỉ thuộc admin tạo; admin khác không sửa được.
+- Dữ liệu cũ sau migrate gán về admin seed (`DEFAULT_ADMIN_*` trong env, mặc định user `admin`, slug `default`).
+
+Biến môi trường seed (tùy chọn):
+
+```
+DEFAULT_ADMIN_USER=admin
+DEFAULT_ADMIN_PASSWORD=admin123
+DEFAULT_ADMIN_SLUG=default
+DEFAULT_BANK_CODE=vpbank
+DEFAULT_ACCOUNT_NUMBER=2746520062001
+DEFAULT_ACCOUNT_HOLDER=PHAM DINH NGHIA
+```
+
+Thêm admin mới (không ghi đè admin cũ):
+
+```bash
+SEED_ADMIN_USER=nhom_b \
+SEED_ADMIN_PASSWORD=matkhau \
+SEED_ADMIN_SLUG=nhom-b \
+SEED_ADMIN_DISPLAY_NAME="Nhóm B" \
+SEED_ADMIN_BANK_CODE=vpbank \
+SEED_ADMIN_ACCOUNT_NUMBER=1234567890 \
+SEED_ADMIN_ACCOUNT_HOLDER="TEN CHU TK" \
+npm run db:seed:admin
+```
+
+`userName` và `slug` phải chưa tồn tại; nếu trùng script thoát lỗi. `npm run db:seed` chỉ tạo admin gốc một lần (chạy lại thì bỏ qua).
+
 ### Xem Dashboard
 
-- Dashboard hiển thị tổng quát theo tuần hiện tại
-- Xem số tiền từng người phải trả
+- Dashboard hiển thị tổng quát theo tuần của admin (query `?admin=slug` khi chưa đăng nhập)
+- Xem số tiền từng người phải trả; QR khi đã cấu hình đủ ngân hàng trong Hồ sơ (`/profile`)
 - Xem chi tiết các đơn hàng trong tuần
 
 ## 🔧 Scripts
@@ -135,24 +175,93 @@ Hệ thống sẽ tự động:
 - `npm run db:migrate` - Chạy database migration
 - `npm run db:generate` - Generate Prisma Client
 - `npm run db:studio` - Mở Prisma Studio (GUI cho database)
+- `npm run db:seed` - Tạo admin gốc (một lần, không cập nhật khi chạy lại)
+- `npm run db:seed:admin` - Tạo admin mới (bắt buộc `SEED_ADMIN_*` trong env)
+
+## 🚢 Deploy production (Docker trên server)
+
+### Lần đầu
+
+```bash
+git clone <url-repo> antruanao_app && cd antruanao_app
+cp .env.exammple .env
+# Sửa .env: SESSION_SECRET, mật khẩu DB/admin (xem mục Multi-admin bên dưới)
+
+docker compose up -d --build
+
+# Schema DB (dùng migrate deploy nếu repo có prisma/migrations)
+docker compose exec app npx prisma db push
+
+# Admin gốc — chỉ tạo lần đầu (bỏ qua nếu đã có admin)
+docker compose exec app npm run db:seed
+```
+
+Trên server nên đặt **HTTPS** (Nginx/Caddy → `127.0.0.1:4000`). Production không nên publish cổng Postgres `5432` ra internet.
+
+### Thêm admin mới trên server (sau deploy)
+
+Mỗi nhóm = 1 admin mới, **không** ghi đè admin cũ. Chạy trong container:
+
+```bash
+docker compose exec app sh -c '
+  SEED_ADMIN_USER=admin2 \
+  SEED_ADMIN_PASSWORD=matkhau_manh \
+  SEED_ADMIN_SLUG=team-b \
+  SEED_ADMIN_DISPLAY_NAME="Nhóm B" \
+  npm run db:seed:admin
+'
+```
+
+Tùy chọn ngân hàng (để trống = cấu hình sau tại `/profile`):
+
+```bash
+docker compose exec app sh -c '
+  SEED_ADMIN_USER=nhom_b \
+  SEED_ADMIN_PASSWORD=... \
+  SEED_ADMIN_SLUG=nhom-b \
+  SEED_ADMIN_DISPLAY_NAME="Nhóm B" \
+  SEED_ADMIN_BANK_CODE=vpbank \
+  SEED_ADMIN_ACCOUNT_NUMBER=1234567890 \
+  SEED_ADMIN_ACCOUNT_HOLDER="TEN CHU TK" \
+  npm run db:seed:admin
+'
+```
+
+Link sau khi tạo:
+
+- Board: `https://<domain>/?admin=team-b`
+- Đóng họ: `https://<domain>/payment?admin=team-b`
+
+Nếu lỡ có board `default` trống (trùng seed cũ):
+
+```bash
+docker compose exec app npm run db:cleanup:orphan-admins
+```
+
+### Cập nhật bản mới
+
+```bash
+git pull
+docker compose up -d --build
+docker compose exec app npx prisma db push
+# hoặc: docker compose exec app npx prisma migrate deploy
+```
+
+Không chạy lại `db:seed` trên DB đang dùng. Chỉ `db:seed:admin` khi cần thêm nhóm.
+
+### Backup DB nhanh
+
+```bash
+docker compose exec postgres pg_dump -U antruanao antruanao_db > backup.sql
+```
 
 ## 🐳 Docker Commands
 
 ```bash
-# Build và chạy tất cả services
-docker-compose up -d
-
-# Xem logs
-docker-compose logs -f app
-
-# Dừng services
-docker-compose down
-
-# Dừng và xóa volumes (xóa data)
-docker-compose down -v
-
-# Rebuild containers
-docker-compose up -d --build
+docker compose up -d --build
+docker compose logs -f app
+docker compose down
+docker compose down -v   # xóa cả volume DB
 ```
 
 ## 📝 Notes

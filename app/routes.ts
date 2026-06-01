@@ -38,6 +38,14 @@ export default [
     file: "routes/weeks.tsx",
   },
   {
+    path: "profile",
+    file: "routes/profile.tsx",
+  },
+  {
+    path: "settings",
+    file: "routes/settings.tsx",
+  },
+  {
     path: "api/users",
     file: "routes/api.users.tsx",
   },

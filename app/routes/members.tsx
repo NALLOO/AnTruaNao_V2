@@ -2,7 +2,7 @@ import type { Route } from "./+types/members";
 import { Form, useLoaderData, useNavigation } from "react-router";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { db } from "~/lib/db.server";
-import { requireAdminId } from "~/lib/session.server";
+import { weekWhereForAdmin } from "~/lib/admin.shared";
 import { calculateUserTotals, applyShippingToUserTotals } from "~/lib/order.utils";
 
 export function meta({ }: Route.MetaArgs) {
@@ -13,26 +13,22 @@ export function meta({ }: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Yêu cầu đăng nhập
-  await requireAdminId(request);
+  const { requireAdminId } = await import("~/lib/session.server");
+  const adminId = await requireAdminId(request);
+  const weekScope = { week: weekWhereForAdmin(adminId) };
 
   const [users, allItems, ordersForShip] = await Promise.all([
     db.user.findMany({
-      include: {
-        _count: {
-          select: {
-            orderItems: true,
-          },
-        },
-        orderItems: {
-          select: { finalPrice: true },
-        },
-      },
+      orderBy: { name: "asc" },
     }),
     db.orderItem.findMany({
+      where: {
+        order: weekScope,
+      },
       include: { user: true },
     }),
     db.order.findMany({
+      where: weekScope,
       select: {
         shippingFee: true,
         items: {
@@ -68,18 +64,30 @@ export async function loader({ request }: Route.LoaderArgs) {
     totalsWithShip.map((t) => [t.userId, t.totalAmount])
   );
 
-  const usersWithTotal = users.map(({ orderItems, ...user }) => ({
+  const itemCountByUserId = new Map<string, number>();
+  for (const item of allItems) {
+    itemCountByUserId.set(
+      item.userId,
+      (itemCountByUserId.get(item.userId) ?? 0) + 1
+    );
+  }
+
+  const usersWithTotal = users.map((user) => ({
     ...user,
     totalAmount: amountByUserId.get(user.id) ?? 0,
+    _count: {
+      orderItems: itemCountByUserId.get(user.id) ?? 0,
+    },
   }));
 
-  // Sắp xếp theo số đơn hàng giảm dần
   usersWithTotal.sort((a, b) => b._count.orderItems - a._count.orderItems);
 
   return { users: usersWithTotal };
 }
 
 export async function action({ request }: Route.ActionArgs) {
+  const { requireAdminId } = await import("~/lib/session.server");
+  await requireAdminId(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
 
