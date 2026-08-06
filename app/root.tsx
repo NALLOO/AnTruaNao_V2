@@ -31,17 +31,19 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { getAdminById } = await import("~/lib/admin.server");
   const adminId = await getAdminId(request);
   let dashboardHref = "/";
+  let isSuperAdmin = false;
   if (adminId) {
     const admin = await getAdminById(adminId);
     if (admin) {
       dashboardHref = boardUrlForAdmin(admin.slug);
+      isSuperAdmin = admin.isSuperAdmin;
     }
   }
-  return { isAuthenticated: !!adminId, dashboardHref };
+  return { isAuthenticated: !!adminId, dashboardHref, isSuperAdmin };
 }
 
 export default function App() {
-  const { isAuthenticated, dashboardHref } = useLoaderData<typeof loader>();
+  const { isAuthenticated, dashboardHref, isSuperAdmin } = useLoaderData<typeof loader>();
 
   return (
     <html lang="vi">
@@ -94,6 +96,14 @@ export default function App() {
                       >
                         Thành viên
                       </a>
+                      {isSuperAdmin && (
+                        <a
+                          href="/admins"
+                          className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
+                        >
+                          Quản lý Admin
+                        </a>
+                      )}
                       <a
                         href="/logout"
                         className="text-red-600 hover:text-red-800 px-3 py-2 rounded-md text-sm font-medium"

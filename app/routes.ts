@@ -30,6 +30,10 @@ export default [
     file: "routes/members.tsx",
   },
   {
+    path: "admins",
+    file: "routes/admins.tsx",
+  },
+  {
     path: "payment",
     file: "routes/payment.tsx",
   },

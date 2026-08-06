@@ -15,7 +15,8 @@
     "db:push": "prisma db push",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:seed:admin": "npx tsx prisma/seed-admin.ts",
-    "db:cleanup:orphan-admins": "npx tsx prisma/cleanup-orphan-admins.ts"
+    "db:cleanup:orphan-admins": "npx tsx prisma/cleanup-orphan-admins.ts",
+    "db:set-super-admin": "npx tsx prisma/set-super-admin.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

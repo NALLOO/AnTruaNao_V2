@@ -14,8 +14,11 @@ export function meta({ }: Route.MetaArgs) {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const { requireAdminId } = await import("~/lib/session.server");
+  const { getAdminById } = await import("~/lib/admin.server");
   const adminId = await requireAdminId(request);
   const weekScope = { week: weekWhereForAdmin(adminId) };
+  const currentAdmin = await getAdminById(adminId);
+  const isSuperAdmin = currentAdmin?.isSuperAdmin ?? false;
 
   const [users, allItems, ordersForShip] = await Promise.all([
     db.user.findMany({
@@ -82,14 +85,19 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   usersWithTotal.sort((a, b) => b._count.orderItems - a._count.orderItems);
 
-  return { users: usersWithTotal };
+  return { users: usersWithTotal, isSuperAdmin };
 }
 
 export async function action({ request }: Route.ActionArgs) {
   const { requireAdminId } = await import("~/lib/session.server");
-  await requireAdminId(request);
+  const adminId = await requireAdminId(request);
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
+
+  if (intent === "delete") {
+    const { requireSuperAdmin } = await import("~/lib/admin.server");
+    await requireSuperAdmin(adminId);
+  }
 
   if (intent === "create") {
     // Lấy danh sách thành viên từ form (hỗ trợ thêm nhiều người cùng lúc)
@@ -221,7 +229,7 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Members() {
-  const { users } = useLoaderData<typeof loader>();
+  const { users, isSuperAdmin } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const isSubmitting = navigation.state === "submitting";
 
@@ -556,7 +564,7 @@ export default function Members() {
                           >
                             Sửa
                           </button>
-                          {user._count.orderItems === 0 && (
+                          {isSuperAdmin && user._count.orderItems === 0 && (
                             <Form method="post" className="inline">
                               <input type="hidden" name="intent" value="delete" />
                               <input type="hidden" name="id" value={user.id} />

@@ -20,6 +20,19 @@ export async function getAdminById(adminId: string): Promise<Admin | null> {
   return db.admin.findUnique({ where: { id: adminId } });
 }
 
+export async function requireSuperAdmin(adminId: string): Promise<Admin> {
+  const admin = await getAdminById(adminId);
+  if (!admin) {
+    throw new Response("Không tìm thấy admin", { status: 404 });
+  }
+  if (!admin.isSuperAdmin) {
+    throw new Response("Chỉ super admin mới có quyền thực hiện thao tác này", {
+      status: 403,
+    });
+  }
+  return admin;
+}
+
 export async function listPublicAdmins(): Promise<PublicAdminSummary[]> {
   const admins = await db.admin.findMany({
     orderBy: [{ displayName: "asc" }, { userName: "asc" }],

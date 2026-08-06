@@ -45,7 +45,7 @@ docker compose up -d --build
 
 4. Migration + seed admin gốc:
 ```bash
-docker compose exec app npx prisma db push
+docker compose exec app npm run db:migrate:deploy
 docker compose exec app npm run db:seed
 ```
 
@@ -172,11 +172,13 @@ npm run db:seed:admin
 - `npm run dev` - Chạy development server
 - `npm run build` - Build cho production
 - `npm run start` - Chạy production server
-- `npm run db:migrate` - Chạy database migration
+- `npm run db:migrate` - Migration dev (local)
+- `npm run db:migrate:deploy` - Migration production (giữ dữ liệu)
 - `npm run db:generate` - Generate Prisma Client
 - `npm run db:studio` - Mở Prisma Studio (GUI cho database)
 - `npm run db:seed` - Tạo admin gốc (một lần, không cập nhật khi chạy lại)
 - `npm run db:seed:admin` - Tạo admin mới (bắt buộc `SEED_ADMIN_*` trong env)
+- `npm run db:set-super-admin` - Cấp quyền super admin cho admin đã tồn tại (bắt buộc `SUPER_ADMIN_USER` trong env)
 
 ## 🚢 Deploy production (Docker trên server)
 
@@ -189,8 +191,8 @@ cp .env.exammple .env
 
 docker compose up -d --build
 
-# Schema DB (dùng migrate deploy nếu repo có prisma/migrations)
-docker compose exec app npx prisma db push
+# Schema DB — KHÔNG dùng db push trên DB đã có dữ liệu (sẽ hỏi reset = mất data)
+docker compose exec app npm run db:migrate:deploy
 
 # Admin gốc — chỉ tạo lần đầu (bỏ qua nếu đã có admin)
 docker compose exec app npm run db:seed
@@ -238,16 +240,56 @@ Nếu lỡ có board `default` trống (trùng seed cũ):
 docker compose exec app npm run db:cleanup:orphan-admins
 ```
 
+### Phân quyền Super admin
+
+Từ bản này, admin thường **chỉ có quyền thêm** thành viên; **xóa thành viên** và **thêm/xóa admin khác** (trang `/admins`) chỉ dành cho **super admin**.
+
+Sau khi migrate (thêm cột `isSuperAdmin`), server đã có sẵn nhiều admin nhưng chưa ai là super admin — chạy lệnh sau để cấp quyền cho một admin đã tồn tại (thay `admin` bằng `userName` thật):
+
+```bash
+docker compose exec -e SUPER_ADMIN_USER=admin app npm run db:set-super-admin
+```
+
+Sau đó admin đó đăng nhập lại sẽ thấy mục **Quản lý Admin** trên thanh nav để thêm/xóa admin khác.
+
 ### Cập nhật bản mới
 
 ```bash
 git pull
 docker compose up -d --build
-docker compose exec app npx prisma db push
-# hoặc: docker compose exec app npx prisma migrate deploy
+docker compose exec app npm run db:migrate:deploy
 ```
 
-Không chạy lại `db:seed` trên DB đang dùng. Chỉ `db:seed:admin` khi cần thêm nhóm.
+Không chạy lại `db:seed` trên DB đang dùng. **Không** chạy `prisma db push` trên production có dữ liệu. Chỉ `db:seed:admin` khi cần thêm nhóm.
+
+### DB production báo “All data will be lost”?
+
+1. Ở prompt `db push` → gõ **`N`** (không reset).
+2. Nếu `migrate deploy` báo **No migration found** → thư mục `prisma/migrations` chưa có trên server. **Commit & push** migrations từ máy dev, rồi `git pull` + `docker compose up -d --build`.
+
+**Cách nhanh trên server (giữ data, không cần migrations trong image):**
+
+```bash
+# Backup
+docker compose exec postgres pg_dump -U antruanao antruanao_db > backup_$(date +%F).sql
+
+# Chạy SQL upgrade (copy file prisma/scripts/multi-admin-upgrade.sql lên server, hoặc sau git pull)
+docker compose exec -T postgres psql -U antruanao -d antruanao_db < prisma/scripts/multi-admin-upgrade.sql
+```
+
+Hoặc trong container app (sau git pull):
+
+```bash
+docker compose exec app npm run db:upgrade:multi-admin
+```
+
+Sau khi có `prisma/migrations` trên server:
+
+```bash
+docker compose exec app npx prisma migrate deploy
+```
+
+Migration gán tuần cũ về admin đầu tiên, **không xóa** orders/users. Đổi mật khẩu tại `/profile` nếu admin mặc định `admin123`.
 
 ### Backup DB nhanh
 

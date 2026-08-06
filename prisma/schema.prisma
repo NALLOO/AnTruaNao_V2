@@ -102,6 +102,7 @@ model Admin {
   bankCode          String?
   accountNumber     String?
   accountHolderName String?
+  isSuperAdmin      Boolean  @default(false) // Quyền thêm/xóa admin khác, xóa thành viên
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

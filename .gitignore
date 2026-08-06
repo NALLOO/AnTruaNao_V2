@@ -7,7 +7,6 @@
 /build/
 
 # Prisma
-/prisma/migrations/
 
 # Logs
 *.log
